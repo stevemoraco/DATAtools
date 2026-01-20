@@ -1,10 +1,10 @@
 {
-  "name": "replit-claude-persist",
+  "name": "datatools",
   "version": "1.0.0",
   "description": "Persist Claude Code sessions, auth, and history across Replit container restarts",
   "main": "index.js",
   "bin": {
-    "replit-claude-persist": "./index.js"
+    "datatools": "./index.js"
   },
   "scripts": {
     "postinstall": "node index.js"
