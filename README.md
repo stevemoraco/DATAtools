@@ -24,7 +24,7 @@ npx replit-claude-persist
 ### Option 2: curl
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/replit-claude-persist/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/stevemoraco/DATAtools/main/install.sh | bash
 ```
 
 ### Option 3: Manual

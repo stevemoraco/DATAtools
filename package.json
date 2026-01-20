@@ -17,13 +17,13 @@
     "session",
     "cli"
   ],
-  "author": "",
+  "author": "stevemoraco",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/replit-claude-persist"
+    "url": "https://github.com/stevemoraco/DATAtools"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/replit-claude-persist#readme",
+  "homepage": "https://github.com/stevemoraco/DATAtools#readme",
   "engines": {
     "node": ">=16.0.0"
   }
