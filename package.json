@@ -1,6 +1,6 @@
 {
   "name": "replit-tools",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Persist Claude Code sessions, auth, and history across Replit container restarts",
   "main": "index.js",
   "bin": {
