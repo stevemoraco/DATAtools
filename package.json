@@ -1,10 +1,10 @@
 {
-  "name": "@stevemoraco/datatools",
+  "name": "replit-tools",
   "version": "1.0.0",
   "description": "Persist Claude Code sessions, auth, and history across Replit container restarts",
   "main": "index.js",
   "bin": {
-    "datatools": "./index.js"
+    "replit-tools": "./index.js"
   },
   "scripts": {
     "postinstall": "node index.js"
