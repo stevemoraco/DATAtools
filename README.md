@@ -1,46 +1,52 @@
-# replit-claude-persist
+# DATA Tools
 
-**Persist Claude Code sessions, authentication, and history across Replit container restarts.**
+**One command to set up Claude Code and Codex CLI on Replit with full persistence.**
 
-When Replit containers restart, everything outside `/home/runner/workspace/` is wiped - including your Claude conversations, auth tokens, and installed binaries. This tool fixes that.
+When Replit containers restart, everything outside `/home/runner/workspace/` is wiped - including installed CLIs, conversations, auth tokens, and command history. DATA Tools fixes all of that.
 
-## Features
-
-- **Session Persistence** - Conversations survive container restarts
-- **Interactive Session Picker** - Choose which session to resume on shell start
-- **Multi-Terminal Support** - Each terminal tracks its own session
-- **Auth Persistence** - Keep your Claude authentication working
-- **Binary Caching** - Claude binary persists (faster startup)
-- **Bash History** - Command history survives restarts too
-
-## Installation
-
-### Option 1: npx (easiest)
+## Quick Start
 
 ```bash
-npx replit-claude-persist
+npx replit-tools
 ```
 
-### Option 2: curl
+That's it. The installer will:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/stevemoraco/DATAtools/main/install.sh | bash
+1. **Install Claude Code** (if not already installed)
+2. **Install OpenAI Codex CLI** (if not already installed)
+3. **Detect existing config** and preserve your data
+4. **Set up persistence** so everything survives restarts
+5. **Launch the session picker** so you can start working immediately
+
+## What Gets Installed
+
+| Tool | Source | Purpose |
+|------|--------|---------|
+| **Claude Code** | `curl https://claude.ai/install.sh` | Anthropic's CLI for Claude |
+| **Codex CLI** | `npm i -g @openai/codex` | OpenAI's coding assistant |
+
+Both are installed only if not already present. Existing installations are preserved.
+
+## What Gets Persisted
+
+| Data | Location | Survives Restart? |
+|------|----------|-------------------|
+| Claude conversations | `.claude-persistent/` | Yes |
+| Claude credentials | `.claude-persistent/` | Yes |
+| Claude binary | `.local/share/claude/versions/` | Yes |
+| Codex data | `.codex-persistent/` | Yes |
+| Bash history | `.persistent-home/` | Yes |
+| Per-terminal sessions | `.claude-sessions/` | Yes |
+
+## The Session Picker
+
+After installation (and on every new shell), you'll see:
+
 ```
+✅ Claude Code already installed (1.0.17)
+✅ Codex CLI already installed
 
-### Option 3: Manual
-
-```bash
-npm install -g replit-claude-persist
-replit-claude-persist
-```
-
-## What You'll See
-
-After installation, opening a new shell shows:
-
-```
 ✅ Claude authentication: valid (23h remaining)
-✅ Claude Code ready: 2.0.71 (Claude Code)
 
 ╭─────────────────────────────────────────────────────────╮
 │  Claude Session Manager                                 │
@@ -56,7 +62,9 @@ After installation, opening a new shell shows:
   Choice [c/r/n/s]: _
 ```
 
-Press `r` to see detailed session info:
+### Session Details
+
+Press `r` to see full session metadata:
 
 ```
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -69,30 +77,85 @@ Press `r` to see detailed session info:
   Latest:   "Thanks, that worked!"
 ```
 
+Each session shows:
+- Full UUID
+- Message count and file size
+- Time since last activity
+- Start and last activity timestamps
+- First and latest prompts (truncated)
+
+## Multi-Terminal Support
+
+Each terminal tracks its own session independently:
+
+```
+Terminal pts/0 → Session abc123... (your migration work)
+Terminal pts/1 → Session def456... (your docs work)
+Terminal pts/2 → Session ghi789... (your debugging)
+```
+
+Press `c` to continue YOUR terminal's last session. Other terminals are unaffected.
+
 ## How It Works
 
-The tool creates symlinks from ephemeral locations to persistent workspace storage:
+The installer creates symlinks from ephemeral locations to persistent workspace storage:
 
 ```
-~/.claude      →  /workspace/.claude-persistent/
-~/.codex       →  /workspace/.codex-persistent/
-~/.local/bin/  →  /workspace/.local/share/claude/versions/
+~/.claude           →  /workspace/.claude-persistent/
+~/.codex            →  /workspace/.codex-persistent/
+~/.local/share/claude →  /workspace/.local/share/claude/
+~/.local/bin/claude →  /workspace/.local/share/claude/versions/X.X.X
 ```
 
-On every shell start, `.config/bashrc` ensures symlinks exist and shows the session picker.
+Three layers ensure setup runs on every restart:
+1. `.replit` onBoot hook (runs at container boot)
+2. `.config/bashrc` (runs on every shell start)
+3. Scripts in `workspace/scripts/` (called by above)
+
+## Smart Detection
+
+The installer checks for:
+
+- **Existing persistent config** - Uses your existing `.claude-persistent/` if present
+- **Replit Secrets** - Detects `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`
+- **Existing installations** - Won't reinstall Claude or Codex if already present
+- **Existing data in ~/.claude** - Moves it to persistent storage instead of overwriting
+
+## Installation Options
+
+### Option 1: npx (recommended)
+
+```bash
+npx replit-tools
+```
+
+### Option 2: curl
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stevemoraco/DATAtools/main/install.sh | bash
+```
+
+### Option 3: Global install
+
+```bash
+npm install -g replit-tools
+replit-tools
+```
 
 ## Commands
 
+After installation, these aliases are available:
+
 | Command | Description |
 |---------|-------------|
-| `cr` | Continue last session |
-| `claude-menu` | Show session picker again |
-| `claude-new` | Start fresh session |
-| `claude-pick` | Claude's built-in picker |
+| `cr` | Continue last Claude session |
+| `claude-resume` | Same as `cr` |
+| `claude-pick` | Claude's built-in session picker |
+| `claude-menu` | Show the session manager menu again |
 
 ## Configuration
 
-### Disable the menu
+### Disable the session picker menu
 
 ```bash
 export CLAUDE_NO_PROMPT=true
@@ -100,32 +163,39 @@ export CLAUDE_NO_PROMPT=true
 
 Add to `.config/bashrc` to make permanent.
 
-### Fix auth permanently
+### Fix authentication permanently
 
 ```bash
 claude setup-token
 ```
 
-Creates a long-lived token that doesn't expire.
+Creates a long-lived API token that doesn't expire (OAuth tokens expire every ~24h).
 
 ## Files Created
 
 ```
 workspace/
-├── .claude-persistent/     # Conversations, credentials
+├── .claude-persistent/     # Claude conversations & credentials
 ├── .codex-persistent/      # Codex CLI data
 ├── .claude-sessions/       # Per-terminal session tracking
 ├── .local/share/claude/    # Claude binary versions
 ├── .persistent-home/       # Bash history
 ├── .config/bashrc          # Shell startup config
-└── scripts/
-    ├── setup-claude-code.sh
-    └── claude-session-manager.sh
+├── scripts/
+│   ├── setup-claude-code.sh
+│   └── claude-session-manager.sh
+└── .gitignore              # Updated to ignore credential dirs
 ```
 
 ## Troubleshooting
 
-### Menu not appearing
+### Claude or Codex not found after restart
+
+```bash
+source /home/runner/workspace/scripts/setup-claude-code.sh
+```
+
+### Session picker not appearing
 
 ```bash
 source /home/runner/workspace/.config/bashrc
@@ -142,8 +212,26 @@ claude setup-token
 ### Symlinks broken
 
 ```bash
-source /home/runner/workspace/scripts/setup-claude-code.sh
+npx replit-tools
 ```
+
+Running the installer again is safe - it preserves existing data.
+
+## Security
+
+The installer adds these to `.gitignore`:
+- `.claude-persistent/` (contains credentials)
+- `.codex-persistent/` (contains credentials)
+
+Your API keys and conversation history won't be committed to git.
+
+## Why "DATA Tools"?
+
+**D**eveloper **A**ssistant **T**ool **A**utomation - everything you need to run AI coding assistants on Replit, persisted and ready to go.
+
+## Repository
+
+GitHub: [stevemoraco/DATAtools](https://github.com/stevemoraco/DATAtools)
 
 ## License
 
