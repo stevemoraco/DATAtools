@@ -7,8 +7,10 @@ When Replit containers restart, everything outside `/home/runner/workspace/` is 
 ## Quick Start
 
 ```bash
-npx replit-tools
+npx -y replit-tools
 ```
+
+(The `-y` skips the "Ok to proceed?" prompt)
 
 That's it. The installer will:
 
@@ -173,7 +175,7 @@ If you set these in your Replit Secrets to paths inside `/home/runner/workspace/
 ### Option 1: npx (recommended)
 
 ```bash
-npx replit-tools
+npx -y replit-tools
 ```
 
 ### Option 2: curl
@@ -268,7 +270,7 @@ claude setup-token
 ### Symlinks broken
 
 ```bash
-npx replit-tools
+npx -y replit-tools
 ```
 
 Running the installer again is safe - it preserves existing data.

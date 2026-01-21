@@ -1,12 +1,51 @@
 #!/usr/bin/env node
 
-const { execSync, spawn } = require('child_process');
+const { execSync, spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
 const WORKSPACE = '/home/runner/workspace';
 const HOME = os.homedir();
+
+// Helper to run commands safely without crashing the installer
+function safeExec(cmd, options = {}) {
+  try {
+    const result = spawnSync('bash', ['-c', cmd], {
+      encoding: 'utf8',
+      timeout: options.timeout || 120000,
+      env: options.env || process.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024 // 10MB
+    });
+
+    if (options.showOutput && result.stdout) {
+      // Show condensed output
+      const lines = result.stdout.trim().split('\n');
+      if (lines.length <= 5) {
+        lines.forEach(l => console.log(`   ${l}`));
+      } else {
+        console.log(`   ${lines[0]}`);
+        console.log(`   ... (${lines.length - 2} more lines)`);
+        console.log(`   ${lines[lines.length - 1]}`);
+      }
+    }
+
+    return {
+      success: result.status === 0,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+      status: result.status
+    };
+  } catch (err) {
+    return {
+      success: false,
+      stdout: '',
+      stderr: err.message,
+      status: -1
+    };
+  }
+}
 
 // Wrap everything in try-catch to prevent crashes
 try {
@@ -205,21 +244,24 @@ function main() {
 
   if (!claudeInstalled) {
     console.log('📦 Installing Claude Code...');
-    try {
-      const installEnv = {
-        ...process.env,
-        CLAUDE_CONFIG_DIR: claudePersistentDir,
-        CLAUDE_WORKSPACE_DIR: claudePersistentDir
-      };
-      execSync('curl -fsSL https://claude.ai/install.sh | bash', {
-        stdio: 'inherit',
-        shell: '/bin/bash',
-        env: installEnv,
-        timeout: 120000 // 2 minute timeout
-      });
+    const installEnv = {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: claudePersistentDir,
+      CLAUDE_WORKSPACE_DIR: claudePersistentDir
+    };
+    const result = safeExec('curl -fsSL https://claude.ai/install.sh | bash', {
+      env: installEnv,
+      timeout: 180000, // 3 minute timeout
+      showOutput: true
+    });
+
+    if (result.success) {
       console.log('✅ Claude Code installed');
-    } catch (err) {
+    } else {
       console.log('⚠️  Claude Code installation had issues (may still work)');
+      if (result.stderr && result.stderr.length < 200) {
+        console.log(`   ${result.stderr.trim()}`);
+      }
     }
   } else {
     const version = claudeVersions.sort().pop() || 'installed';
@@ -234,20 +276,23 @@ function main() {
 
   if (!codexInstalled) {
     console.log('📦 Installing OpenAI Codex CLI...');
-    try {
-      const installEnv = {
-        ...process.env,
-        CODEX_HOME: codexPersistentDir
-      };
-      execSync('npm i -g @openai/codex', {
-        stdio: 'inherit',
-        shell: '/bin/bash',
-        env: installEnv,
-        timeout: 120000 // 2 minute timeout
-      });
+    const installEnv = {
+      ...process.env,
+      CODEX_HOME: codexPersistentDir
+    };
+    const result = safeExec('npm i -g @openai/codex', {
+      env: installEnv,
+      timeout: 180000, // 3 minute timeout
+      showOutput: true
+    });
+
+    if (result.success) {
       console.log('✅ Codex CLI installed');
-    } catch (err) {
+    } else {
       console.log('⚠️  Codex installation had issues (may still work)');
+      if (result.stderr && result.stderr.length < 200) {
+        console.log(`   ${result.stderr.trim()}`);
+      }
     }
   } else {
     console.log('✅ Codex CLI already installed');
