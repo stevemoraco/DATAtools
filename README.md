@@ -116,10 +116,24 @@ Three layers ensure setup runs on every restart:
 
 The installer checks for:
 
+- **`CLAUDE_CONFIG_DIR`** - Respects custom Claude config directory if set in Replit Secrets
 - **Existing persistent config** - Uses your existing `.claude-persistent/` if present
 - **Replit Secrets** - Detects `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`
 - **Existing installations** - Won't reinstall Claude or Codex if already present
 - **Existing data in ~/.claude** - Moves it to persistent storage instead of overwriting
+
+### Supported Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAUDE_CONFIG_DIR` | Custom directory for Claude config/data (recommended) |
+| `CLAUDE_WORKSPACE_DIR` | Alternative name for config directory |
+| `CLAUDE_DATA_DIR` | Alternative name for config directory |
+| `CLAUDE_HOME` | Alternative name for config directory |
+| `ANTHROPIC_API_KEY` | Claude API authentication |
+| `OPENAI_API_KEY` | Codex API authentication |
+
+If you set `CLAUDE_CONFIG_DIR` in your Replit Secrets to a path inside `/home/runner/workspace/`, DATA Tools will use that directory for persistence instead of the default `.claude-persistent/`.
 
 ## Installation Options
 
