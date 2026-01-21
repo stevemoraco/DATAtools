@@ -43,8 +43,36 @@ log() {
 }
 
 # =============================================================================
-# Step 0: Show version and check for updates (only in interactive shells)
+# Step 0: Show version, check for updates, and auto-update if available
 # =============================================================================
+auto_update_scripts() {
+    local latest_ver="$1"
+    local tmp_dir=$(mktemp -d)
+
+    # Download and extract latest package
+    if npm pack "${PACKAGE_NAME}@${latest_ver}" --pack-destination="${tmp_dir}" >/dev/null 2>&1; then
+        local tarball="${tmp_dir}/${PACKAGE_NAME}-${latest_ver}.tgz"
+        if [ -f "${tarball}" ]; then
+            tar -xzf "${tarball}" -C "${tmp_dir}" 2>/dev/null
+
+            # Copy updated scripts
+            if [ -d "${tmp_dir}/package/scripts" ]; then
+                cp -f "${tmp_dir}/package/scripts/"*.sh "${SCRIPTS_DIR}/" 2>/dev/null
+                chmod 755 "${SCRIPTS_DIR}/"*.sh 2>/dev/null
+            fi
+
+            # Update version file
+            echo "${latest_ver}" > "${VERSION_FILE}"
+
+            rm -rf "${tmp_dir}"
+            return 0
+        fi
+    fi
+
+    rm -rf "${tmp_dir}" 2>/dev/null
+    return 1
+}
+
 if [[ $- == *i* ]]; then
     CURRENT_VERSION=""
     if [ -f "${VERSION_FILE}" ]; then
@@ -56,8 +84,14 @@ if [[ $- == *i* ]]; then
         LATEST_VERSION=$(timeout 3 npm view "${PACKAGE_NAME}" version 2>/dev/null || echo "")
 
         if [ -n "${LATEST_VERSION}" ] && [ "${LATEST_VERSION}" != "${CURRENT_VERSION}" ]; then
-            echo "📦 DATA Tools v${CURRENT_VERSION} (update available: v${LATEST_VERSION})"
-            echo "   Run: npx -y ${PACKAGE_NAME}@latest"
+            echo "📦 DATA Tools v${CURRENT_VERSION} → v${LATEST_VERSION}"
+            echo "   ⬆️  Auto-updating..."
+
+            if auto_update_scripts "${LATEST_VERSION}"; then
+                echo "   ✅ Updated to v${LATEST_VERSION}"
+            else
+                echo "   ⚠️  Auto-update failed, continuing with v${CURRENT_VERSION}"
+            fi
         else
             echo "📦 DATA Tools v${CURRENT_VERSION}"
         fi
