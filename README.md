@@ -124,16 +124,26 @@ The installer checks for:
 
 ### Supported Environment Variables
 
+**Claude Code:**
+
 | Variable | Purpose |
 |----------|---------|
-| `CLAUDE_CONFIG_DIR` | Custom directory for Claude config/data (recommended) |
-| `CLAUDE_WORKSPACE_DIR` | Alternative name for config directory |
-| `CLAUDE_DATA_DIR` | Alternative name for config directory |
-| `CLAUDE_HOME` | Alternative name for config directory |
+| `CLAUDE_CONFIG_DIR` | Custom directory for Claude config/data |
+| `CLAUDE_WORKSPACE_DIR` | Alternative name (both are valid) |
+| `CLAUDE_DATA_DIR` | Alternative name |
+| `CLAUDE_HOME` | Alternative name |
 | `ANTHROPIC_API_KEY` | Claude API authentication |
+
+**OpenAI Codex CLI:**
+
+| Variable | Purpose |
+|----------|---------|
+| `CODEX_HOME` | Custom directory for Codex config/data (official) |
+| `CODEX_CONFIG_DIR` | Alternative name |
+| `CODEX_DATA_DIR` | Alternative name |
 | `OPENAI_API_KEY` | Codex API authentication |
 
-If you set `CLAUDE_CONFIG_DIR` in your Replit Secrets to a path inside `/home/runner/workspace/`, DATA Tools will use that directory for persistence instead of the default `.claude-persistent/`.
+If you set these in your Replit Secrets to paths inside `/home/runner/workspace/`, DATA Tools will use those directories for persistence instead of the defaults.
 
 ## Installation Options
 
