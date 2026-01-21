@@ -107,6 +107,20 @@ if (fs.existsSync(replitPath)) {
   fs.writeFileSync(replitPath, '# Claude persistence\n' + onBootLine + '\n');
 }
 
+// Update .gitignore (only essential sensitive dirs)
+console.log('📝 Updating .gitignore...');
+const gitignorePath = path.join(WORKSPACE, '.gitignore');
+const gitignoreEntries = '\n# Claude/Codex credentials (added by replit-tools)\n.claude-persistent/\n.codex-persistent/\n';
+
+if (fs.existsSync(gitignorePath)) {
+  let content = fs.readFileSync(gitignorePath, 'utf8');
+  if (!content.includes('.claude-persistent')) {
+    fs.writeFileSync(gitignorePath, content + gitignoreEntries);
+  }
+} else {
+  fs.writeFileSync(gitignorePath, gitignoreEntries.trim() + '\n');
+}
+
 console.log('');
 console.log('✅ Installation complete!');
 console.log('');
