@@ -350,6 +350,28 @@ function main() {
   } else {
     const version = claudeVersions.sort().pop() || 'installed';
     console.log(`✅ Claude Code already installed (${version})`);
+
+    // Ensure binary is in our versions directory
+    const defaultVersionsDir = path.join(HOME, '.local/share/claude/versions');
+    const sourceDirs = [defaultVersionsDir, oldLocations.versions];
+
+    for (const sourceDir of sourceDirs) {
+      try {
+        if (fs.existsSync(sourceDir)) {
+          const versions = fs.readdirSync(sourceDir).filter(f => !f.startsWith('.'));
+          versions.forEach(v => {
+            const src = path.join(sourceDir, v);
+            const dest = path.join(claudeVersionsDir, v);
+            if (!fs.existsSync(dest) && fs.existsSync(src)) {
+              try {
+                fs.copyFileSync(src, dest);
+                fs.chmodSync(dest, '755');
+              } catch {}
+            }
+          });
+        }
+      } catch {}
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════

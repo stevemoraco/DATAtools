@@ -71,6 +71,21 @@ fi
 # =============================================================================
 # Step 4: Find latest Claude version and create binary symlink
 # =============================================================================
+
+# First, sync any versions from default location to our directory
+DEFAULT_VERSIONS="${HOME}/.local/share/claude/versions"
+if [ -d "${DEFAULT_VERSIONS}" ]; then
+    for version_file in "${DEFAULT_VERSIONS}"/*; do
+        if [ -f "${version_file}" ]; then
+            version_name=$(basename "${version_file}")
+            if [ ! -f "${CLAUDE_VERSIONS}/${version_name}" ]; then
+                cp -p "${version_file}" "${CLAUDE_VERSIONS}/${version_name}" 2>/dev/null || true
+                chmod 755 "${CLAUDE_VERSIONS}/${version_name}" 2>/dev/null || true
+            fi
+        fi
+    done
+fi
+
 LATEST_VERSION=""
 if [ -d "${CLAUDE_VERSIONS}" ]; then
     LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
@@ -92,7 +107,6 @@ else
     # Install Claude Code using the official installer
     if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
         # After install, copy to our versions directory
-        DEFAULT_VERSIONS="${HOME}/.local/share/claude/versions"
         if [ -d "${DEFAULT_VERSIONS}" ]; then
             LATEST_VERSION=$(ls -1 "${DEFAULT_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
             if [ -n "${LATEST_VERSION}" ]; then
