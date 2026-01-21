@@ -9,6 +9,11 @@ const WORKSPACE = '/home/runner/workspace';
 const HOME = os.homedir();
 const REPLIT_TOOLS = path.join(WORKSPACE, '.replit-tools');
 
+// Get version from package.json
+const PACKAGE_JSON = require('./package.json');
+const VERSION = PACKAGE_JSON.version;
+const PACKAGE_NAME = PACKAGE_JSON.name;
+
 // Helper to run commands safely without crashing the installer
 function safeExec(cmd, options = {}) {
   try {
@@ -45,6 +50,24 @@ function safeExec(cmd, options = {}) {
       status: -1
     };
   }
+}
+
+// Check for updates from npm
+function checkForUpdates() {
+  try {
+    const result = spawnSync('npm', ['view', PACKAGE_NAME, 'version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    if (result.status === 0 && result.stdout) {
+      const latestVersion = result.stdout.trim();
+      if (latestVersion && latestVersion !== VERSION) {
+        return latestVersion;
+      }
+    }
+  } catch {}
+  return null;
 }
 
 // Helper to migrate data from old location to new
@@ -85,8 +108,16 @@ function main() {
 
   console.log('');
   console.log('╭─────────────────────────────────────────────────────────╮');
-  console.log('│  DATA Tools - Claude & Codex Persistence               │');
+  console.log(`│  DATA Tools v${VERSION.padEnd(44)}│`);
+  console.log('│  Claude & Codex Persistence for Replit                 │');
   console.log('╰─────────────────────────────────────────────────────────╯');
+
+  // Check for updates
+  const latestVersion = checkForUpdates();
+  if (latestVersion) {
+    console.log(`  ⬆️  Update available: v${VERSION} → v${latestVersion}`);
+    console.log(`     Run: npx -y ${PACKAGE_NAME}@latest`);
+  }
   console.log('');
 
   // Helper to check if command exists
@@ -665,10 +696,15 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
   // SHOW COMPLETION MESSAGE
   // ═══════════════════════════════════════════════════════════════════
 
+  // Save version info for setup script to read
+  try {
+    fs.writeFileSync(path.join(REPLIT_TOOLS, '.version'), VERSION);
+  } catch {}
+
   console.log('');
   console.log('╔═════════════════════════════════════════════════════════════╗');
   console.log('║                                                             ║');
-  console.log('║   ✅  DATA Tools Installation Complete!                     ║');
+  console.log(`║   ✅  DATA Tools v${VERSION} Installation Complete!`.padEnd(62) + '║');
   console.log('║                                                             ║');
   console.log('╠═════════════════════════════════════════════════════════════╣');
   console.log('║                                                             ║');

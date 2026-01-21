@@ -1,6 +1,6 @@
 {
   "name": "replit-tools",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "DATA Tools - One command to set up Claude Code and Codex CLI on Replit with full persistence",
   "main": "index.js",
   "bin": {

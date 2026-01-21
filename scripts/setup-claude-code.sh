@@ -31,12 +31,38 @@ CLAUDE_SYMLINK="${HOME}/.claude"
 LOCAL_BIN="${HOME}/.local/bin"
 LOCAL_SHARE_CLAUDE="${HOME}/.local/share/claude"
 
+# Version file
+VERSION_FILE="${REPLIT_TOOLS}/.version"
+PACKAGE_NAME="replit-tools"
+
 # Logging helper
 log() {
     if [[ $- == *i* ]]; then
         echo "$1"
     fi
 }
+
+# =============================================================================
+# Step 0: Show version and check for updates (only in interactive shells)
+# =============================================================================
+if [[ $- == *i* ]]; then
+    CURRENT_VERSION=""
+    if [ -f "${VERSION_FILE}" ]; then
+        CURRENT_VERSION=$(cat "${VERSION_FILE}" 2>/dev/null)
+    fi
+
+    if [ -n "${CURRENT_VERSION}" ]; then
+        # Check for updates (with timeout, don't block shell startup)
+        LATEST_VERSION=$(timeout 3 npm view "${PACKAGE_NAME}" version 2>/dev/null || echo "")
+
+        if [ -n "${LATEST_VERSION}" ] && [ "${LATEST_VERSION}" != "${CURRENT_VERSION}" ]; then
+            echo "📦 DATA Tools v${CURRENT_VERSION} (update available: v${LATEST_VERSION})"
+            echo "   Run: npx -y ${PACKAGE_NAME}@latest"
+        else
+            echo "📦 DATA Tools v${CURRENT_VERSION}"
+        fi
+    fi
+fi
 
 # =============================================================================
 # Step 1: Ensure persistent directories exist
