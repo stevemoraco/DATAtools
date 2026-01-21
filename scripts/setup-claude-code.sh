@@ -8,6 +8,7 @@
 #   2. Symlink for Claude binary (~/.local/bin/claude)
 #   3. Authentication persistence (credentials stored in workspace)
 #   4. Auto-installation if Claude is missing
+#   5. Automatic OAuth token refresh before expiration
 #
 # Run this script on every container restart via .config/bashrc or .replit
 # =============================================================================
@@ -16,9 +17,10 @@ set -e
 
 # Configuration
 WORKSPACE="/home/runner/workspace"
-CLAUDE_PERSISTENT="${WORKSPACE}/.claude-persistent"
+CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${WORKSPACE}/.claude-persistent}"
 CLAUDE_LOCAL_SHARE="${WORKSPACE}/.local/share/claude"
 CLAUDE_VERSIONS="${CLAUDE_LOCAL_SHARE}/versions"
+AUTH_REFRESH_SCRIPT="${WORKSPACE}/scripts/claude-auth-refresh.sh"
 
 # Target locations (ephemeral, need symlinks)
 CLAUDE_SYMLINK="${HOME}/.claude"
@@ -39,6 +41,7 @@ mkdir -p "${CLAUDE_PERSISTENT}"
 mkdir -p "${CLAUDE_VERSIONS}"
 mkdir -p "${LOCAL_BIN}"
 mkdir -p "${HOME}/.local/share"
+mkdir -p "${WORKSPACE}/logs"
 
 # =============================================================================
 # Step 2: Create ~/.claude symlink for conversation history & credentials
@@ -63,7 +66,7 @@ fi
 # =============================================================================
 LATEST_VERSION=""
 if [ -d "${CLAUDE_VERSIONS}" ]; then
-    LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | sort -V | tail -n1)
+    LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
 fi
 
 if [ -n "${LATEST_VERSION}" ] && [ -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
@@ -79,31 +82,19 @@ else
     # Claude not installed - install it
     log "⚠️  Claude Code not found, installing..."
 
-    # Install Claude Code using npm
-    if command -v npm &> /dev/null; then
-        npm install -g @anthropic-ai/claude-code 2>/dev/null || {
-            log "❌ Failed to install Claude Code via npm"
-            log "   Try running: npm install -g @anthropic-ai/claude-code"
-        }
-
-        # After npm install, the binary should be available
-        # Move it to our persistent location
-        if command -v claude &> /dev/null; then
-            INSTALLED_PATH=$(which claude)
-            if [ -f "${INSTALLED_PATH}" ] && [ ! -L "${INSTALLED_PATH}" ]; then
-                # Get version
-                VERSION=$(claude --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)
-                if [ -n "${VERSION}" ]; then
-                    cp "${INSTALLED_PATH}" "${CLAUDE_VERSIONS}/${VERSION}"
-                    chmod +x "${CLAUDE_VERSIONS}/${VERSION}"
-                    rm -f "${LOCAL_BIN}/claude" 2>/dev/null || true
-                    ln -sf "${CLAUDE_VERSIONS}/${VERSION}" "${LOCAL_BIN}/claude"
-                    log "✅ Claude Code ${VERSION} installed and persisted"
-                fi
+    # Install Claude Code using the official installer
+    if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
+        # After install, find the new version
+        if [ -d "${CLAUDE_VERSIONS}" ]; then
+            LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
+            if [ -n "${LATEST_VERSION}" ]; then
+                ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
+                log "✅ Claude Code ${LATEST_VERSION} installed"
             fi
         fi
     else
-        log "❌ npm not found, cannot install Claude Code"
+        log "❌ Failed to install Claude Code"
+        log "   Try running: curl -fsSL https://claude.ai/install.sh | bash"
     fi
 fi
 
@@ -115,11 +106,14 @@ if [[ ":$PATH:" != *":${LOCAL_BIN}:"* ]]; then
 fi
 
 # =============================================================================
-# Step 6: Verify authentication
+# Step 6: Auto-refresh OAuth token if needed
 # =============================================================================
 CREDENTIALS_FILE="${CLAUDE_PERSISTENT}/.credentials.json"
-if [ -f "${CREDENTIALS_FILE}" ]; then
-    # Check if credentials are valid (not expired)
+if [ -f "${CREDENTIALS_FILE}" ] && [ -f "${AUTH_REFRESH_SCRIPT}" ]; then
+    # Source the auth refresh script to get the function
+    source "${AUTH_REFRESH_SCRIPT}"
+
+    # Check and refresh if needed (this handles all the logic)
     if command -v node &> /dev/null; then
         AUTH_INFO=$(node -e "
             try {
@@ -127,37 +121,70 @@ if [ -f "${CREDENTIALS_FILE}" ]; then
                 const oauth = creds.claudeAiOauth;
                 const apiKey = creds.primaryApiKey;
                 if (apiKey) {
-                    // Long-lived API key - doesn't expire
-                    console.log('apikey');
+                    console.log('apikey:permanent');
                 } else if (oauth && oauth.expiresAt) {
-                    console.log(oauth.expiresAt);
+                    const now = Date.now();
+                    const remaining = Math.floor((oauth.expiresAt - now) / 1000 / 60 / 60);
+                    const hasRefresh = oauth.refreshToken ? 'yes' : 'no';
+                    console.log('oauth:' + remaining + ':' + hasRefresh);
                 }
-            } catch(e) {}
+            } catch(e) { console.log('error'); }
         " 2>/dev/null)
 
-        if [ "${AUTH_INFO}" = "apikey" ]; then
-            log "✅ Claude authentication: long-lived token (no expiration)"
-        elif [ -n "${AUTH_INFO}" ]; then
-            CURRENT_TIME=$(node -e "console.log(Date.now())" 2>/dev/null)
-            if [ -n "${CURRENT_TIME}" ] && [ "${AUTH_INFO}" -gt "${CURRENT_TIME}" ]; then
-                # Calculate time remaining
-                HOURS_LEFT=$(node -e "console.log(Math.floor((${AUTH_INFO} - ${CURRENT_TIME}) / 1000 / 60 / 60))" 2>/dev/null)
-                if [ "${HOURS_LEFT}" -lt 2 ]; then
-                    log "⚠️  Claude authentication: expires in ${HOURS_LEFT}h - run 'claude login' soon"
+        IFS=':' read -r auth_type remaining has_refresh <<< "${AUTH_INFO}"
+
+        if [ "${auth_type}" = "apikey" ]; then
+            log "✅ Claude authentication: API key (permanent)"
+        elif [ "${auth_type}" = "oauth" ]; then
+            if [ "${remaining}" -le 0 ]; then
+                # Token expired - try to refresh
+                if [ "${has_refresh}" = "yes" ]; then
+                    log "⚠️  Token expired, attempting refresh..."
+                    if refresh_token 2>/dev/null; then
+                        # Re-check the new expiry
+                        NEW_REMAINING=$(node -e "
+                            try {
+                                const creds = require('${CREDENTIALS_FILE}');
+                                const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
+                                console.log(remaining);
+                            } catch(e) { console.log('0'); }
+                        " 2>/dev/null)
+                        log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
+                    else
+                        log "❌ Token refresh failed - run: claude login"
+                    fi
                 else
-                    log "✅ Claude authentication: valid (${HOURS_LEFT}h remaining)"
+                    log "❌ Token expired (no refresh token) - run: claude login"
+                fi
+            elif [ "${remaining}" -lt 2 ]; then
+                # Less than 2 hours - refresh proactively
+                if [ "${has_refresh}" = "yes" ]; then
+                    log "🔄 Token expires in ${remaining}h, refreshing..."
+                    if refresh_token 2>/dev/null; then
+                        NEW_REMAINING=$(node -e "
+                            try {
+                                const creds = require('${CREDENTIALS_FILE}');
+                                const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
+                                console.log(remaining);
+                            } catch(e) { console.log('0'); }
+                        " 2>/dev/null)
+                        log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
+                    else
+                        log "⚠️  Refresh failed, ${remaining}h remaining"
+                    fi
+                else
+                    log "⚠️  Claude authentication: ${remaining}h remaining (no refresh token)"
                 fi
             else
-                log "⚠️  Claude authentication: expired, run 'claude login' to re-authenticate"
-                log "   💡 Tip: Run 'claude setup-token' for a long-lived token that won't expire"
+                log "✅ Claude authentication: valid (${remaining}h remaining)"
             fi
+        elif [ "${auth_type}" = "error" ]; then
+            log "⚠️  Could not read credentials"
         fi
-    else
-        log "✅ Claude credentials file exists (persisted in workspace)"
     fi
-else
+elif [ ! -f "${CREDENTIALS_FILE}" ]; then
     log "⚠️  No Claude credentials found. Run 'claude login' to authenticate"
-    log "   💡 Tip: Run 'claude setup-token' for a long-lived token that won't expire"
+    log "   💡 Tip: Run 'claude setup-token' for a long-lived token"
 fi
 
 # =============================================================================

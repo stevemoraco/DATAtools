@@ -375,7 +375,7 @@ function main() {
   console.log('');
   console.log('📝 Installing scripts...');
 
-  const scripts = ['setup-claude-code.sh', 'claude-session-manager.sh'];
+  const scripts = ['setup-claude-code.sh', 'claude-session-manager.sh', 'claude-auth-refresh.sh'];
   scripts.forEach(script => {
     const srcPath = path.join(scriptsDir, script);
     const destPath = path.join(targetScriptsDir, script);

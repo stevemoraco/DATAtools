@@ -1,6 +1,6 @@
 # DATA Tools
 
-**One command to set up Claude Code and Codex CLI on Replit with full persistence.**
+**One command to set up Claude Code and Codex CLI on Replit with full persistence and automatic token refresh.**
 
 When Replit containers restart, everything outside `/home/runner/workspace/` is wiped - including installed CLIs, conversations, auth tokens, and command history. DATA Tools fixes all of that.
 
@@ -16,7 +16,8 @@ That's it. The installer will:
 2. **Install OpenAI Codex CLI** (if not already installed)
 3. **Detect existing config** and preserve your data
 4. **Set up persistence** so everything survives restarts
-5. **Launch the session picker** so you can start working immediately
+5. **Auto-refresh OAuth tokens** before they expire
+6. **Launch the session picker** so you can start working immediately
 
 ## What Gets Installed
 
@@ -38,15 +39,36 @@ Both are installed only if not already present. Existing installations are prese
 | Bash history | `.persistent-home/` | Yes |
 | Per-terminal sessions | `.claude-sessions/` | Yes |
 
+## Automatic Token Refresh
+
+Claude OAuth tokens expire every **8-12 hours**. DATA Tools automatically refreshes them:
+
+- **On every shell start**: Checks token expiry and refreshes if < 2 hours remaining
+- **When expired**: Attempts automatic refresh using the stored refresh token
+- **Transparent**: You'll see `🔄 Token expires in 1h, refreshing...` then `✅ Token refreshed (11h remaining)`
+
+This means you can leave overnight and come back to a working session - no more `claude login` every morning.
+
+### Manual Token Commands
+
+```bash
+# Check token status
+/home/runner/workspace/scripts/claude-auth-refresh.sh --status
+
+# Force refresh now
+/home/runner/workspace/scripts/claude-auth-refresh.sh --force
+
+# Or use a permanent API token (never expires)
+claude setup-token
+```
+
 ## The Session Picker
 
 After installation (and on every new shell), you'll see:
 
 ```
-✅ Claude Code already installed (1.0.17)
-✅ Codex CLI already installed
-
-✅ Claude authentication: valid (23h remaining)
+✅ Claude authentication: valid (11h remaining)
+✅ Claude Code ready: 2.0.71 (Claude Code)
 
 ╭─────────────────────────────────────────────────────────╮
 │  Claude Session Manager                                 │
@@ -101,10 +123,10 @@ Press `c` to continue YOUR terminal's last session. Other terminals are unaffect
 The installer creates symlinks from ephemeral locations to persistent workspace storage:
 
 ```
-~/.claude           →  /workspace/.claude-persistent/
-~/.codex            →  /workspace/.codex-persistent/
+~/.claude             →  /workspace/.claude-persistent/
+~/.codex              →  /workspace/.codex-persistent/
 ~/.local/share/claude →  /workspace/.local/share/claude/
-~/.local/bin/claude →  /workspace/.local/share/claude/versions/X.X.X
+~/.local/bin/claude   →  /workspace/.local/share/claude/versions/X.X.X
 ```
 
 Three layers ensure setup runs on every restart:
@@ -117,7 +139,8 @@ Three layers ensure setup runs on every restart:
 The installer checks for:
 
 - **`CLAUDE_CONFIG_DIR`** - Respects custom Claude config directory if set in Replit Secrets
-- **Existing persistent config** - Uses your existing `.claude-persistent/` if present
+- **`CODEX_HOME`** - Respects custom Codex config directory
+- **Existing persistent config** - Uses your existing config if present
 - **Replit Secrets** - Detects `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`
 - **Existing installations** - Won't reinstall Claude or Codex if already present
 - **Existing data in ~/.claude** - Moves it to persistent storage instead of overwriting
@@ -187,13 +210,13 @@ export CLAUDE_NO_PROMPT=true
 
 Add to `.config/bashrc` to make permanent.
 
-### Fix authentication permanently
+### Use a permanent API token
 
 ```bash
 claude setup-token
 ```
 
-Creates a long-lived API token that doesn't expire (OAuth tokens expire every ~24h).
+Creates a long-lived API token that never expires (recommended for unattended use).
 
 ## Files Created
 
@@ -205,9 +228,11 @@ workspace/
 ├── .local/share/claude/    # Claude binary versions
 ├── .persistent-home/       # Bash history
 ├── .config/bashrc          # Shell startup config
+├── logs/                   # Auth refresh logs
 ├── scripts/
-│   ├── setup-claude-code.sh
-│   └── claude-session-manager.sh
+│   ├── setup-claude-code.sh      # Main setup script
+│   ├── claude-session-manager.sh # Interactive session picker
+│   └── claude-auth-refresh.sh    # OAuth token auto-refresh
 └── .gitignore              # Updated to ignore credential dirs
 ```
 
@@ -225,11 +250,18 @@ source /home/runner/workspace/scripts/setup-claude-code.sh
 source /home/runner/workspace/.config/bashrc
 ```
 
-### Auth expired
+### Auth keeps expiring
+
+The auto-refresh should handle this, but if it fails:
 
 ```bash
-claude login
-# Or for permanent fix:
+# Check why refresh failed
+cat /home/runner/workspace/logs/auth-refresh.log
+
+# Manual refresh
+/home/runner/workspace/scripts/claude-auth-refresh.sh --force
+
+# Or use permanent token (recommended)
 claude setup-token
 ```
 
