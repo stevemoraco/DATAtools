@@ -15,12 +15,16 @@
 
 set -e
 
-# Configuration
+# Configuration - use .replit-tools structure
 WORKSPACE="/home/runner/workspace"
-CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${WORKSPACE}/.claude-persistent}"
-CLAUDE_LOCAL_SHARE="${WORKSPACE}/.local/share/claude"
-CLAUDE_VERSIONS="${CLAUDE_LOCAL_SHARE}/versions"
-AUTH_REFRESH_SCRIPT="${WORKSPACE}/scripts/claude-auth-refresh.sh"
+REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
+
+# Allow env vars to override (for custom config locations)
+CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${REPLIT_TOOLS}/.claude-persistent}"
+CLAUDE_VERSIONS="${REPLIT_TOOLS}/.claude-versions"
+LOGS_DIR="${REPLIT_TOOLS}/.logs"
+SCRIPTS_DIR="${REPLIT_TOOLS}/scripts"
+AUTH_REFRESH_SCRIPT="${SCRIPTS_DIR}/claude-auth-refresh.sh"
 
 # Target locations (ephemeral, need symlinks)
 CLAUDE_SYMLINK="${HOME}/.claude"
@@ -41,7 +45,7 @@ mkdir -p "${CLAUDE_PERSISTENT}"
 mkdir -p "${CLAUDE_VERSIONS}"
 mkdir -p "${LOCAL_BIN}"
 mkdir -p "${HOME}/.local/share"
-mkdir -p "${WORKSPACE}/logs"
+mkdir -p "${LOGS_DIR}"
 
 # =============================================================================
 # Step 2: Create ~/.claude symlink for conversation history & credentials
@@ -55,10 +59,13 @@ fi
 # =============================================================================
 # Step 3: Create ~/.local/share/claude symlink for installed versions
 # =============================================================================
-if [ ! -L "${LOCAL_SHARE_CLAUDE}" ] || [ "$(readlink -f "${LOCAL_SHARE_CLAUDE}")" != "${CLAUDE_LOCAL_SHARE}" ]; then
-    rm -rf "${LOCAL_SHARE_CLAUDE}" 2>/dev/null || true
-    ln -sf "${CLAUDE_LOCAL_SHARE}" "${LOCAL_SHARE_CLAUDE}"
-    log "✅ Claude versions symlink: ~/.local/share/claude -> ${CLAUDE_LOCAL_SHARE}"
+SHARE_VERSIONS="${LOCAL_SHARE_CLAUDE}/versions"
+mkdir -p "${LOCAL_SHARE_CLAUDE}"
+
+if [ ! -L "${SHARE_VERSIONS}" ] || [ "$(readlink -f "${SHARE_VERSIONS}")" != "${CLAUDE_VERSIONS}" ]; then
+    rm -rf "${SHARE_VERSIONS}" 2>/dev/null || true
+    ln -sf "${CLAUDE_VERSIONS}" "${SHARE_VERSIONS}"
+    log "✅ Claude versions symlink: ~/.local/share/claude/versions -> ${CLAUDE_VERSIONS}"
 fi
 
 # =============================================================================
@@ -84,10 +91,13 @@ else
 
     # Install Claude Code using the official installer
     if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
-        # After install, find the new version
-        if [ -d "${CLAUDE_VERSIONS}" ]; then
-            LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
+        # After install, copy to our versions directory
+        DEFAULT_VERSIONS="${HOME}/.local/share/claude/versions"
+        if [ -d "${DEFAULT_VERSIONS}" ]; then
+            LATEST_VERSION=$(ls -1 "${DEFAULT_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
             if [ -n "${LATEST_VERSION}" ]; then
+                cp -p "${DEFAULT_VERSIONS}/${LATEST_VERSION}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
+                chmod 755 "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
                 ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
                 log "✅ Claude Code ${LATEST_VERSION} installed"
             fi

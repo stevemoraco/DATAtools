@@ -7,6 +7,7 @@ const os = require('os');
 
 const WORKSPACE = '/home/runner/workspace';
 const HOME = os.homedir();
+const REPLIT_TOOLS = path.join(WORKSPACE, '.replit-tools');
 
 // Helper to run commands safely without crashing the installer
 function safeExec(cmd, options = {}) {
@@ -20,7 +21,6 @@ function safeExec(cmd, options = {}) {
     });
 
     if (options.showOutput && result.stdout) {
-      // Show condensed output
       const lines = result.stdout.trim().split('\n');
       if (lines.length <= 5) {
         lines.forEach(l => console.log(`   ${l}`));
@@ -45,6 +45,21 @@ function safeExec(cmd, options = {}) {
       status: -1
     };
   }
+}
+
+// Helper to migrate data from old location to new
+function migrateDirectory(oldPath, newPath, description) {
+  if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
+    try {
+      console.log(`   Migrating ${description}...`);
+      execSync(`cp -rp "${oldPath}" "${newPath}"`, { shell: '/bin/bash' });
+      return true;
+    } catch (err) {
+      console.log(`   ⚠️  Could not migrate ${description}: ${err.message}`);
+      return false;
+    }
+  }
+  return false;
 }
 
 // Wrap everything in try-catch to prevent crashes
@@ -90,10 +105,33 @@ function main() {
   }
 
   // ═══════════════════════════════════════════════════════════════════
+  // DEFINE DIRECTORY STRUCTURE
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Default locations inside .replit-tools (all hidden with dots)
+  const defaultClaudeDir = path.join(REPLIT_TOOLS, '.claude-persistent');
+  const defaultCodexDir = path.join(REPLIT_TOOLS, '.codex-persistent');
+  const sessionsDir = path.join(REPLIT_TOOLS, '.claude-sessions');
+  const persistentHomeDir = path.join(REPLIT_TOOLS, '.persistent-home');
+  const claudeVersionsDir = path.join(REPLIT_TOOLS, '.claude-versions');
+  const logsDir = path.join(REPLIT_TOOLS, '.logs');
+  const scriptsDir = path.join(REPLIT_TOOLS, 'scripts');
+
+  // Old locations (for migration)
+  const oldLocations = {
+    claude: path.join(WORKSPACE, '.claude-persistent'),
+    codex: path.join(WORKSPACE, '.codex-persistent'),
+    sessions: path.join(WORKSPACE, '.claude-sessions'),
+    home: path.join(WORKSPACE, '.persistent-home'),
+    versions: path.join(WORKSPACE, '.local/share/claude/versions'),
+    logs: path.join(WORKSPACE, 'logs'),
+    scripts: path.join(WORKSPACE, 'scripts')
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
   // CLAUDE CONFIG DIRECTORY DETECTION
   // ═══════════════════════════════════════════════════════════════════
 
-  // Check for all possible Claude config env vars
   const claudeConfigEnvVars = [
     'CLAUDE_CONFIG_DIR',
     'CLAUDE_WORKSPACE_DIR',
@@ -115,14 +153,16 @@ function main() {
   }
 
   // Determine Claude persistent directory
-  let claudePersistentDir = path.join(WORKSPACE, '.claude-persistent');
+  let claudePersistentDir = defaultClaudeDir;
+  let usingCustomClaudeDir = false;
 
   if (customClaudeDir) {
     if (customClaudeDir.startsWith(WORKSPACE)) {
       claudePersistentDir = customClaudeDir;
-      console.log(`   Using custom Claude directory`);
+      usingCustomClaudeDir = true;
+      console.log(`   Using custom Claude directory (not migrating)`);
     } else {
-      console.log(`   ⚠️  Custom dir outside workspace - will redirect to workspace for persistence`);
+      console.log(`   ⚠️  Custom dir outside workspace - using .replit-tools for persistence`);
     }
   }
 
@@ -130,7 +170,6 @@ function main() {
   // CODEX CONFIG DIRECTORY DETECTION
   // ═══════════════════════════════════════════════════════════════════
 
-  // Check for Codex config env vars
   const codexConfigEnvVars = [
     'CODEX_HOME',
     'CODEX_CONFIG_DIR',
@@ -151,32 +190,23 @@ function main() {
   }
 
   // Determine Codex persistent directory
-  let codexPersistentDir = path.join(WORKSPACE, '.codex-persistent');
+  let codexPersistentDir = defaultCodexDir;
+  let usingCustomCodexDir = false;
 
   if (customCodexDir) {
     if (customCodexDir.startsWith(WORKSPACE)) {
       codexPersistentDir = customCodexDir;
-      console.log(`   Using custom Codex directory`);
+      usingCustomCodexDir = true;
+      console.log(`   Using custom Codex directory (not migrating)`);
     } else {
-      console.log(`   ⚠️  Custom dir outside workspace - will redirect to workspace for persistence`);
+      console.log(`   ⚠️  Custom dir outside workspace - using .replit-tools for persistence`);
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // CHECK FOR EXISTING CONFIG
+  // CHECK FOR API KEYS
   // ═══════════════════════════════════════════════════════════════════
 
-  const existingClaudeConfig = fs.existsSync(claudePersistentDir);
-  const existingCodexConfig = fs.existsSync(codexPersistentDir);
-
-  if (existingClaudeConfig) {
-    console.log(`✅ Found existing Claude config`);
-  }
-  if (existingCodexConfig) {
-    console.log('✅ Found existing Codex config');
-  }
-
-  // Check for API key secrets
   if (getEnvVar('ANTHROPIC_API_KEY')) {
     console.log('✅ Found ANTHROPIC_API_KEY');
   }
@@ -188,43 +218,76 @@ function main() {
   // CREATE DIRECTORIES
   // ═══════════════════════════════════════════════════════════════════
 
-  const dirs = [
-    '.claude-sessions',
-    '.local/share/claude/versions',
-    '.persistent-home',
-    '.config',
-    'scripts',
-    'logs'
-  ];
-
-  // Add Claude persistent dir
-  if (claudePersistentDir.startsWith(WORKSPACE)) {
-    const relativePath = claudePersistentDir.replace(WORKSPACE + '/', '');
-    if (!dirs.includes(relativePath)) {
-      dirs.unshift(relativePath);
-    }
-  }
-
-  // Add Codex persistent dir
-  if (codexPersistentDir.startsWith(WORKSPACE)) {
-    const relativePath = codexPersistentDir.replace(WORKSPACE + '/', '');
-    if (!dirs.includes(relativePath)) {
-      dirs.unshift(relativePath);
-    }
-  }
-
   console.log('');
   console.log('📁 Creating directories...');
-  dirs.forEach(dir => {
-    const fullPath = path.join(WORKSPACE, dir);
-    if (!fs.existsSync(fullPath)) {
+
+  // Create base .replit-tools directory
+  if (!fs.existsSync(REPLIT_TOOLS)) {
+    fs.mkdirSync(REPLIT_TOOLS, { recursive: true });
+  }
+
+  // Create all subdirectories
+  const dirsToCreate = [
+    claudePersistentDir,
+    codexPersistentDir,
+    sessionsDir,
+    persistentHomeDir,
+    claudeVersionsDir,
+    logsDir,
+    scriptsDir,
+    path.join(WORKSPACE, '.config') // Keep .config in workspace for Replit auto-sourcing
+  ];
+
+  dirsToCreate.forEach(dir => {
+    if (!fs.existsSync(dir)) {
       try {
-        fs.mkdirSync(fullPath, { recursive: true });
+        fs.mkdirSync(dir, { recursive: true });
       } catch (err) {
         console.log(`   ⚠️  Could not create ${dir}: ${err.message}`);
       }
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // MIGRATE FROM OLD LOCATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  console.log('');
+  console.log('🔄 Checking for data migration...');
+
+  let migrated = false;
+
+  // Migrate Claude data (only if not using custom dir)
+  if (!usingCustomClaudeDir) {
+    if (migrateDirectory(oldLocations.claude, claudePersistentDir, 'Claude config')) {
+      migrated = true;
+    }
+  }
+
+  // Migrate Codex data (only if not using custom dir)
+  if (!usingCustomCodexDir) {
+    if (migrateDirectory(oldLocations.codex, codexPersistentDir, 'Codex config')) {
+      migrated = true;
+    }
+  }
+
+  // Always migrate these (no custom dir options)
+  if (migrateDirectory(oldLocations.sessions, sessionsDir, 'session data')) migrated = true;
+  if (migrateDirectory(oldLocations.home, persistentHomeDir, 'bash history')) migrated = true;
+  if (migrateDirectory(oldLocations.versions, claudeVersionsDir, 'Claude versions')) migrated = true;
+
+  // Migrate logs (just auth-refresh.log)
+  if (fs.existsSync(path.join(oldLocations.logs, 'auth-refresh.log')) && !fs.existsSync(path.join(logsDir, 'auth-refresh.log'))) {
+    try {
+      fs.copyFileSync(path.join(oldLocations.logs, 'auth-refresh.log'), path.join(logsDir, 'auth-refresh.log'));
+      migrated = true;
+      console.log('   Migrating auth logs...');
+    } catch {}
+  }
+
+  if (!migrated) {
+    console.log('   No migration needed');
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   // INSTALL CLAUDE CODE
@@ -234,9 +297,15 @@ function main() {
 
   let claudeVersions = [];
   try {
-    claudeVersions = fs.readdirSync(path.join(WORKSPACE, '.local/share/claude/versions'))
-      .filter(f => !f.startsWith('.'));
+    claudeVersions = fs.readdirSync(claudeVersionsDir).filter(f => !f.startsWith('.'));
   } catch {}
+
+  // Also check old location
+  if (claudeVersions.length === 0) {
+    try {
+      claudeVersions = fs.readdirSync(oldLocations.versions).filter(f => !f.startsWith('.'));
+    } catch {}
+  }
 
   const claudeInstalled = commandExists('claude') ||
     fs.existsSync(path.join(HOME, '.local/bin/claude')) ||
@@ -251,12 +320,27 @@ function main() {
     };
     const result = safeExec('curl -fsSL https://claude.ai/install.sh | bash', {
       env: installEnv,
-      timeout: 180000, // 3 minute timeout
+      timeout: 180000,
       showOutput: true
     });
 
     if (result.success) {
       console.log('✅ Claude Code installed');
+      // Move installed version to our directory
+      try {
+        const defaultVersionsDir = path.join(HOME, '.local/share/claude/versions');
+        if (fs.existsSync(defaultVersionsDir)) {
+          const versions = fs.readdirSync(defaultVersionsDir).filter(f => !f.startsWith('.'));
+          versions.forEach(v => {
+            const src = path.join(defaultVersionsDir, v);
+            const dest = path.join(claudeVersionsDir, v);
+            if (!fs.existsSync(dest)) {
+              fs.copyFileSync(src, dest);
+              fs.chmodSync(dest, '755');
+            }
+          });
+        }
+      } catch {}
     } else {
       console.log('⚠️  Claude Code installation had issues (may still work)');
       if (result.stderr && result.stderr.length < 200) {
@@ -282,7 +366,7 @@ function main() {
     };
     const result = safeExec('npm i -g @openai/codex', {
       env: installEnv,
-      timeout: 180000, // 3 minute timeout
+      timeout: 180000,
       showOutput: true
     });
 
@@ -305,7 +389,7 @@ function main() {
   console.log('');
   console.log('🔗 Setting up symlinks...');
 
-  // Claude symlink
+  // Claude config symlink (~/.claude -> our persistent dir)
   const claudeLink = path.join(HOME, '.claude');
   try {
     let needsLink = false;
@@ -330,12 +414,13 @@ function main() {
     if (needsLink) {
       fs.symlinkSync(claudePersistentDir, claudeLink);
     }
-    console.log(`   ~/.claude → ${claudePersistentDir.replace(WORKSPACE + '/', '')}/`);
+    const displayPath = claudePersistentDir.replace(WORKSPACE + '/', '');
+    console.log(`   ~/.claude → ${displayPath}/`);
   } catch (err) {
     console.log(`   ⚠️  Could not create Claude symlink: ${err.message}`);
   }
 
-  // Codex symlink
+  // Codex config symlink (~/.codex -> our persistent dir)
   const codexLink = path.join(HOME, '.codex');
   try {
     let needsLink = false;
@@ -360,7 +445,8 @@ function main() {
     if (needsLink) {
       fs.symlinkSync(codexPersistentDir, codexLink);
     }
-    console.log(`   ~/.codex → ${codexPersistentDir.replace(WORKSPACE + '/', '')}/`);
+    const displayPath = codexPersistentDir.replace(WORKSPACE + '/', '');
+    console.log(`   ~/.codex → ${displayPath}/`);
   } catch (err) {
     console.log(`   ⚠️  Could not create Codex symlink: ${err.message}`);
   }
@@ -368,45 +454,51 @@ function main() {
   // Claude binary symlinks
   const localBin = path.join(HOME, '.local/bin');
   const localShare = path.join(HOME, '.local/share');
-  const claudeShareTarget = path.join(WORKSPACE, '.local/share/claude');
 
   try { fs.mkdirSync(localBin, { recursive: true }); } catch {}
   try { fs.mkdirSync(localShare, { recursive: true }); } catch {}
 
-  // Link .local/share/claude
+  // Link .local/share/claude to our versions directory's parent
+  const claudeShareTarget = path.join(REPLIT_TOOLS, '.claude-versions');
   try {
-    let needsLink = false;
+    // Create a wrapper directory structure for compatibility
+    const shareClaudeDir = path.join(localShare, 'claude');
+    const shareVersionsDir = path.join(shareClaudeDir, 'versions');
+
+    if (!fs.existsSync(shareClaudeDir)) {
+      fs.mkdirSync(shareClaudeDir, { recursive: true });
+    }
+
+    // Symlink versions dir
     try {
-      const stat = fs.lstatSync(path.join(localShare, 'claude'));
+      const stat = fs.lstatSync(shareVersionsDir);
       if (stat.isSymbolicLink()) {
-        const current = fs.readlinkSync(path.join(localShare, 'claude'));
-        if (current !== claudeShareTarget) {
-          fs.unlinkSync(path.join(localShare, 'claude'));
-          needsLink = true;
+        const current = fs.readlinkSync(shareVersionsDir);
+        if (current !== claudeVersionsDir) {
+          fs.unlinkSync(shareVersionsDir);
+          fs.symlinkSync(claudeVersionsDir, shareVersionsDir);
         }
       }
     } catch {
-      needsLink = true;
+      fs.symlinkSync(claudeVersionsDir, shareVersionsDir);
     }
-
-    if (needsLink) {
-      fs.symlinkSync(claudeShareTarget, path.join(localShare, 'claude'));
-    }
-    console.log('   ~/.local/share/claude → .local/share/claude/');
+    console.log(`   ~/.local/share/claude/versions → .replit-tools/.claude-versions/`);
   } catch {}
 
   // Link binary to latest version
   try {
-    const versions = fs.readdirSync(path.join(WORKSPACE, '.local/share/claude/versions'))
-      .filter(f => !f.startsWith('.'))
-      .sort();
+    let versions = [];
+    try {
+      versions = fs.readdirSync(claudeVersionsDir).filter(f => !f.startsWith('.')).sort();
+    } catch {}
+
     if (versions.length > 0) {
       const latest = versions[versions.length - 1];
-      const binaryPath = path.join(WORKSPACE, '.local/share/claude/versions', latest);
+      const binaryPath = path.join(claudeVersionsDir, latest);
       const binLink = path.join(localBin, 'claude');
       try { fs.unlinkSync(binLink); } catch {}
       fs.symlinkSync(binaryPath, binLink);
-      console.log(`   ~/.local/bin/claude → versions/${latest}`);
+      console.log(`   ~/.local/bin/claude → .replit-tools/.claude-versions/${latest}`);
     }
   } catch {}
 
@@ -414,16 +506,15 @@ function main() {
   // COPY SCRIPTS
   // ═══════════════════════════════════════════════════════════════════
 
-  const scriptsDir = path.join(__dirname, 'scripts');
-  const targetScriptsDir = path.join(WORKSPACE, 'scripts');
+  const packageScriptsDir = path.join(__dirname, 'scripts');
 
   console.log('');
   console.log('📝 Installing scripts...');
 
-  const scripts = ['setup-claude-code.sh', 'claude-session-manager.sh', 'claude-auth-refresh.sh'];
-  scripts.forEach(script => {
-    const srcPath = path.join(scriptsDir, script);
-    const destPath = path.join(targetScriptsDir, script);
+  const scriptFiles = ['setup-claude-code.sh', 'claude-session-manager.sh', 'claude-auth-refresh.sh'];
+  scriptFiles.forEach(script => {
+    const srcPath = path.join(packageScriptsDir, script);
+    const destPath = path.join(scriptsDir, script);
 
     if (fs.existsSync(srcPath)) {
       try {
@@ -445,7 +536,10 @@ function main() {
 
   const bashrcContent = `#!/bin/bash
 # DATA Tools - Replit Claude & Codex Persistence
-# Auto-generated bashrc
+# Auto-generated bashrc - v2.0 (.replit-tools structure)
+
+# Base directory for all DATA Tools data
+export REPLIT_TOOLS_DIR="${REPLIT_TOOLS}"
 
 # Claude Config Directory (tells Claude where to store data)
 export CLAUDE_CONFIG_DIR="${claudePersistentDir}"
@@ -455,7 +549,7 @@ export CLAUDE_WORKSPACE_DIR="${claudePersistentDir}"
 export CODEX_HOME="${codexPersistentDir}"
 
 # Claude Code Setup
-SETUP_SCRIPT="/home/runner/workspace/scripts/setup-claude-code.sh"
+SETUP_SCRIPT="${scriptsDir}/setup-claude-code.sh"
 [ -f "\${SETUP_SCRIPT}" ] && source "\${SETUP_SCRIPT}"
 
 # Codex Persistence
@@ -463,7 +557,7 @@ mkdir -p "${codexPersistentDir}"
 [ ! -L "\${HOME}/.codex" ] && ln -sf "${codexPersistentDir}" "\${HOME}/.codex"
 
 # Bash History Persistence
-PERSISTENT_HOME="/home/runner/workspace/.persistent-home"
+PERSISTENT_HOME="${persistentHomeDir}"
 mkdir -p "\${PERSISTENT_HOME}"
 export HISTFILE="\${PERSISTENT_HOME}/.bash_history"
 export HISTSIZE=10000
@@ -472,7 +566,7 @@ export HISTCONTROL=ignoredups
 [ -f "\${HISTFILE}" ] && history -r "\${HISTFILE}"
 
 # Session Manager (interactive menu)
-SESSION_MANAGER="/home/runner/workspace/scripts/claude-session-manager.sh"
+SESSION_MANAGER="${scriptsDir}/claude-session-manager.sh"
 [ -f "\${SESSION_MANAGER}" ] && source "\${SESSION_MANAGER}"
 
 # Aliases
@@ -493,15 +587,17 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
 
   console.log('📝 Updating .replit configuration...');
   const replitPath = path.join(WORKSPACE, '.replit');
-  const onBootLine = 'onBoot = "source /home/runner/workspace/scripts/setup-claude-code.sh 2>/dev/null || true"';
+  const onBootLine = `onBoot = "source ${scriptsDir}/setup-claude-code.sh 2>/dev/null || true"`;
 
   try {
     if (fs.existsSync(replitPath)) {
       let content = fs.readFileSync(replitPath, 'utf8');
+      // Remove old onBoot line if present
+      content = content.replace(/onBoot\s*=\s*"[^"]*setup-claude-code\.sh[^"]*"\n?/g, '');
       if (!content.includes('setup-claude-code.sh')) {
         content += '\n\n# Claude persistence (added by DATA Tools)\n' + onBootLine + '\n';
-        fs.writeFileSync(replitPath, content);
       }
+      fs.writeFileSync(replitPath, content);
     } else {
       fs.writeFileSync(replitPath, '# Claude persistence (DATA Tools)\n' + onBootLine + '\n');
     }
@@ -515,12 +611,15 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
 
   console.log('📝 Updating .gitignore...');
   const gitignorePath = path.join(WORKSPACE, '.gitignore');
-  const gitignoreEntries = '\n# Claude/Codex credentials (added by DATA Tools)\n.claude-persistent/\n.codex-persistent/\n';
+  const gitignoreEntries = `
+# DATA Tools - All sensitive data in one place (added by DATA Tools)
+.replit-tools/
+`;
 
   try {
     if (fs.existsSync(gitignorePath)) {
       let content = fs.readFileSync(gitignorePath, 'utf8');
-      if (!content.includes('.claude-persistent')) {
+      if (!content.includes('.replit-tools/')) {
         fs.writeFileSync(gitignorePath, content + gitignoreEntries);
       }
     } else {
@@ -538,6 +637,7 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
   process.env.CLAUDE_CONFIG_DIR = claudePersistentDir;
   process.env.CLAUDE_WORKSPACE_DIR = claudePersistentDir;
   process.env.CODEX_HOME = codexPersistentDir;
+  process.env.REPLIT_TOOLS_DIR = REPLIT_TOOLS;
 
   // ═══════════════════════════════════════════════════════════════════
   // SHOW COMPLETION MESSAGE
@@ -559,8 +659,12 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
   console.log('║                                                             ║');
   console.log('╠═════════════════════════════════════════════════════════════╣');
   console.log('║                                                             ║');
-  console.log(`║   Claude config: ${claudePersistentDir.replace(WORKSPACE + '/', '').padEnd(38)}  ║`);
-  console.log(`║   Codex config:  ${codexPersistentDir.replace(WORKSPACE + '/', '').padEnd(38)}  ║`);
+  console.log('║   All data stored in: .replit-tools/                        ║');
+  console.log('║                                                             ║');
+  const claudeDisplay = claudePersistentDir.replace(WORKSPACE + '/', '').padEnd(40);
+  const codexDisplay = codexPersistentDir.replace(WORKSPACE + '/', '').padEnd(40);
+  console.log(`║   Claude: ${claudeDisplay} ║`);
+  console.log(`║   Codex:  ${codexDisplay} ║`);
   console.log('║                                                             ║');
   console.log('╚═════════════════════════════════════════════════════════════╝');
   console.log('');
@@ -591,7 +695,6 @@ alias claude-pick='claude -r --dangerously-skip-permissions'
   console.log('Launching session manager...');
   console.log('');
 
-  // Use spawn to run bash interactively with our session manager
   const sessionManager = spawn('bash', ['--rcfile', path.join(WORKSPACE, '.config/bashrc'), '-i'], {
     stdio: 'inherit',
     cwd: WORKSPACE,

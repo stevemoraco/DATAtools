@@ -7,7 +7,8 @@
 # =============================================================================
 
 WORKSPACE="/home/runner/workspace"
-SESSIONS_DIR="${WORKSPACE}/.claude-sessions"
+REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
+SESSIONS_DIR="${REPLIT_TOOLS}/.claude-sessions"
 LOCK_DIR="/tmp/.claude-locks"
 
 mkdir -p "${SESSIONS_DIR}" "${LOCK_DIR}" 2>/dev/null

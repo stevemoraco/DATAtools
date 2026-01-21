@@ -32,14 +32,18 @@ Both are installed only if not already present. Existing installations are prese
 
 ## What Gets Persisted
 
+Everything is stored in a single `.replit-tools/` directory:
+
 | Data | Location | Survives Restart? |
 |------|----------|-------------------|
-| Claude conversations | `.claude-persistent/` | Yes |
-| Claude credentials | `.claude-persistent/` | Yes |
-| Claude binary | `.local/share/claude/versions/` | Yes |
-| Codex data | `.codex-persistent/` | Yes |
-| Bash history | `.persistent-home/` | Yes |
-| Per-terminal sessions | `.claude-sessions/` | Yes |
+| Claude conversations | `.replit-tools/.claude-persistent/` | Yes |
+| Claude credentials | `.replit-tools/.claude-persistent/` | Yes |
+| Claude binary | `.replit-tools/.claude-versions/` | Yes |
+| Codex data | `.replit-tools/.codex-persistent/` | Yes |
+| Bash history | `.replit-tools/.persistent-home/` | Yes |
+| Per-terminal sessions | `.replit-tools/.claude-sessions/` | Yes |
+| Auth logs | `.replit-tools/.logs/` | Yes |
+| Scripts | `.replit-tools/scripts/` | Yes |
 
 ## Automatic Token Refresh
 
@@ -55,10 +59,10 @@ This means you can leave overnight and come back to a working session - no more 
 
 ```bash
 # Check token status
-/home/runner/workspace/scripts/claude-auth-refresh.sh --status
+/home/runner/workspace/.replit-tools/scripts/claude-auth-refresh.sh --status
 
 # Force refresh now
-/home/runner/workspace/scripts/claude-auth-refresh.sh --force
+/home/runner/workspace/.replit-tools/scripts/claude-auth-refresh.sh --force
 
 # Or use a permanent API token (never expires)
 claude setup-token
@@ -122,19 +126,19 @@ Press `c` to continue YOUR terminal's last session. Other terminals are unaffect
 
 ## How It Works
 
-The installer creates symlinks from ephemeral locations to persistent workspace storage:
+The installer creates symlinks from ephemeral locations to persistent `.replit-tools/` storage:
 
 ```
-~/.claude             →  /workspace/.claude-persistent/
-~/.codex              →  /workspace/.codex-persistent/
-~/.local/share/claude →  /workspace/.local/share/claude/
-~/.local/bin/claude   →  /workspace/.local/share/claude/versions/X.X.X
+~/.claude                        →  .replit-tools/.claude-persistent/
+~/.codex                         →  .replit-tools/.codex-persistent/
+~/.local/share/claude/versions/  →  .replit-tools/.claude-versions/
+~/.local/bin/claude              →  .replit-tools/.claude-versions/X.X.X
 ```
 
 Three layers ensure setup runs on every restart:
 1. `.replit` onBoot hook (runs at container boot)
 2. `.config/bashrc` (runs on every shell start)
-3. Scripts in `workspace/scripts/` (called by above)
+3. Scripts in `.replit-tools/scripts/` (called by above)
 
 ## Smart Detection
 
@@ -142,7 +146,7 @@ The installer checks for:
 
 - **`CLAUDE_CONFIG_DIR`** - Respects custom Claude config directory if set in Replit Secrets
 - **`CODEX_HOME`** - Respects custom Codex config directory
-- **Existing persistent config** - Uses your existing config if present
+- **Existing persistent config** - Uses your existing config if present (won't migrate if custom dir set)
 - **Replit Secrets** - Detects `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`
 - **Existing installations** - Won't reinstall Claude or Codex if already present
 - **Existing data in ~/.claude** - Moves it to persistent storage instead of overwriting
@@ -168,7 +172,7 @@ The installer checks for:
 | `CODEX_DATA_DIR` | Alternative name |
 | `OPENAI_API_KEY` | Codex API authentication |
 
-If you set these in your Replit Secrets to paths inside `/home/runner/workspace/`, DATA Tools will use those directories for persistence instead of the defaults.
+If you set these in your Replit Secrets to paths inside `/home/runner/workspace/`, DATA Tools will use those directories for persistence instead of the defaults. **Your custom directories will NOT be migrated** - we respect your configuration.
 
 ## Installation Options
 
@@ -224,26 +228,46 @@ Creates a long-lived API token that never expires (recommended for unattended us
 
 ```
 workspace/
-├── .claude-persistent/     # Claude conversations & credentials
-├── .codex-persistent/      # Codex CLI data
-├── .claude-sessions/       # Per-terminal session tracking
-├── .local/share/claude/    # Claude binary versions
-├── .persistent-home/       # Bash history
-├── .config/bashrc          # Shell startup config
-├── logs/                   # Auth refresh logs
-├── scripts/
-│   ├── setup-claude-code.sh      # Main setup script
-│   ├── claude-session-manager.sh # Interactive session picker
-│   └── claude-auth-refresh.sh    # OAuth token auto-refresh
-└── .gitignore              # Updated to ignore credential dirs
+├── .replit-tools/                    # All DATA Tools data (gitignored)
+│   ├── .claude-persistent/           # Claude conversations & credentials
+│   ├── .codex-persistent/            # Codex CLI data
+│   ├── .claude-sessions/             # Per-terminal session tracking
+│   ├── .claude-versions/             # Claude binary versions
+│   ├── .persistent-home/             # Bash history
+│   ├── .logs/                        # Auth refresh logs
+│   └── scripts/                      # Setup & management scripts
+│       ├── setup-claude-code.sh
+│       ├── claude-session-manager.sh
+│       └── claude-auth-refresh.sh
+├── .config/bashrc                    # Shell startup config (sources scripts)
+└── .gitignore                        # Updated to ignore .replit-tools/
 ```
+
+## Upgrading from v1.x
+
+If you used DATA Tools v1.x (before the `.replit-tools/` consolidation), your data will be automatically migrated:
+
+```
+Old Location                    →  New Location
+.claude-persistent/             →  .replit-tools/.claude-persistent/
+.codex-persistent/              →  .replit-tools/.codex-persistent/
+.claude-sessions/               →  .replit-tools/.claude-sessions/
+.persistent-home/               →  .replit-tools/.persistent-home/
+.local/share/claude/versions/   →  .replit-tools/.claude-versions/
+```
+
+Migration only happens if:
+1. Old location exists AND new location doesn't
+2. You don't have custom `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set
+
+Your original data is copied (not moved), so nothing is lost.
 
 ## Troubleshooting
 
 ### Claude or Codex not found after restart
 
 ```bash
-source /home/runner/workspace/scripts/setup-claude-code.sh
+source /home/runner/workspace/.replit-tools/scripts/setup-claude-code.sh
 ```
 
 ### Session picker not appearing
@@ -258,10 +282,10 @@ The auto-refresh should handle this, but if it fails:
 
 ```bash
 # Check why refresh failed
-cat /home/runner/workspace/logs/auth-refresh.log
+cat /home/runner/workspace/.replit-tools/.logs/auth-refresh.log
 
 # Manual refresh
-/home/runner/workspace/scripts/claude-auth-refresh.sh --force
+/home/runner/workspace/.replit-tools/scripts/claude-auth-refresh.sh --force
 
 # Or use permanent token (recommended)
 claude setup-token
@@ -277,11 +301,17 @@ Running the installer again is safe - it preserves existing data.
 
 ## Security
 
-The installer adds these to `.gitignore`:
-- `.claude-persistent/` (contains credentials)
-- `.codex-persistent/` (contains credentials)
+The installer adds `.replit-tools/` to `.gitignore`, which protects:
 
-Your API keys and conversation history won't be committed to git.
+| Path | Contains | Why Protected |
+|------|----------|---------------|
+| `.replit-tools/.claude-persistent/` | OAuth tokens, refresh tokens, conversations | **Critical** - full account access |
+| `.replit-tools/.codex-persistent/` | API keys in `auth.json`, conversations | **Critical** - full account access |
+| `.replit-tools/.claude-sessions/` | Session UUIDs, terminal mappings | Session metadata |
+| `.replit-tools/.persistent-home/` | Bash history | May contain typed secrets |
+| `.replit-tools/.logs/` | Token refresh timestamps | Auth timing info |
+
+Your API keys, OAuth tokens, and conversation history won't be committed to git.
 
 ## Why "DATA Tools"?
 

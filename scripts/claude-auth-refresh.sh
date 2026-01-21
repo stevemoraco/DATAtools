@@ -3,11 +3,19 @@
 # Automatically refreshes Claude Code OAuth tokens before expiration
 # Part of DATA Tools - https://github.com/stevemoraco/DATAtools
 
-CREDENTIALS_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+# Use .replit-tools structure
+WORKSPACE="/home/runner/workspace"
+REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
+CREDENTIALS_FILE="${CLAUDE_CONFIG_DIR:-${REPLIT_TOOLS}/.claude-persistent}/.credentials.json"
+LOG_FILE="${REPLIT_TOOLS}/.logs/auth-refresh.log"
+
+# OAuth configuration
 OAUTH_ENDPOINT="https://console.anthropic.com/v1/oauth/token"
 CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 REFRESH_THRESHOLD_HOURS=2  # Refresh when less than 2 hours remaining
-LOG_FILE="/home/runner/workspace/logs/auth-refresh.log"
+
+# Ensure log directory exists
+mkdir -p "${REPLIT_TOOLS}/.logs" 2>/dev/null
 
 # Logging function
 log() {
