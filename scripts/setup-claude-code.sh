@@ -132,33 +132,71 @@ fi
 # Step 4: Find latest Claude version and create binary symlink
 # =============================================================================
 
-# First, sync any versions from default location to our directory
-DEFAULT_VERSIONS="${HOME}/.local/share/claude/versions"
-if [ -d "${DEFAULT_VERSIONS}" ]; then
-    for version_file in "${DEFAULT_VERSIONS}"/*; do
-        if [ -f "${version_file}" ]; then
-            version_name=$(basename "${version_file}")
-            if [ ! -f "${CLAUDE_VERSIONS}/${version_name}" ]; then
-                cp -p "${version_file}" "${CLAUDE_VERSIONS}/${version_name}" 2>/dev/null || true
-                chmod 755 "${CLAUDE_VERSIONS}/${version_name}" 2>/dev/null || true
+# Check multiple locations for Claude binary (handles race conditions on container restart)
+find_claude_binary() {
+    local found_binary=""
+    local found_version=""
+
+    # Priority 1: Our persistent versions directory
+    if [ -d "${CLAUDE_VERSIONS}" ]; then
+        local ver=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
+        if [ -n "${ver}" ] && [ -f "${CLAUDE_VERSIONS}/${ver}" ]; then
+            found_binary="${CLAUDE_VERSIONS}/${ver}"
+            found_version="${ver}"
+        fi
+    fi
+
+    # Priority 2: Check if claude command already works (might be from previous install)
+    if [ -z "${found_binary}" ]; then
+        local existing_claude=$(command -v claude 2>/dev/null)
+        if [ -n "${existing_claude}" ] && [ -x "${existing_claude}" ]; then
+            # Follow symlinks to find actual binary
+            local real_path=$(readlink -f "${existing_claude}" 2>/dev/null)
+            if [ -f "${real_path}" ]; then
+                found_binary="${real_path}"
+                found_version=$(basename "${real_path}")
             fi
         fi
-    done
-fi
+    fi
 
-LATEST_VERSION=""
-if [ -d "${CLAUDE_VERSIONS}" ]; then
-    LATEST_VERSION=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
-fi
+    # Priority 3: Default install location (not through our symlink)
+    if [ -z "${found_binary}" ]; then
+        local default_loc="${HOME}/.local/share/claude/versions"
+        # Check if this is a real directory, not our symlink
+        if [ -d "${default_loc}" ] && [ ! -L "${default_loc}" ]; then
+            local ver=$(ls -1 "${default_loc}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
+            if [ -n "${ver}" ] && [ -f "${default_loc}/${ver}" ]; then
+                found_binary="${default_loc}/${ver}"
+                found_version="${ver}"
+            fi
+        fi
+    fi
 
-if [ -n "${LATEST_VERSION}" ] && [ -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
-    CLAUDE_BINARY="${CLAUDE_VERSIONS}/${LATEST_VERSION}"
+    # Return results via global variables
+    FOUND_CLAUDE_BINARY="${found_binary}"
+    FOUND_CLAUDE_VERSION="${found_version}"
+}
+
+# Find any existing Claude installation
+find_claude_binary
+
+if [ -n "${FOUND_CLAUDE_BINARY}" ]; then
+    CLAUDE_BINARY="${FOUND_CLAUDE_BINARY}"
+    LATEST_VERSION="${FOUND_CLAUDE_VERSION}"
+
+    # Ensure binary is in our persistent directory
+    if [ ! -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
+        cp -p "${CLAUDE_BINARY}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
+        chmod 755 "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
+        CLAUDE_BINARY="${CLAUDE_VERSIONS}/${LATEST_VERSION}"
+        log "✅ Claude ${LATEST_VERSION} synced to persistent storage"
+    fi
 
     # Create or update the binary symlink
-    if [ ! -L "${LOCAL_BIN}/claude" ] || [ "$(readlink -f "${LOCAL_BIN}/claude")" != "${CLAUDE_BINARY}" ]; then
+    if [ ! -L "${LOCAL_BIN}/claude" ] || [ "$(readlink -f "${LOCAL_BIN}/claude")" != "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
         rm -f "${LOCAL_BIN}/claude" 2>/dev/null || true
-        ln -sf "${CLAUDE_BINARY}" "${LOCAL_BIN}/claude"
-        log "✅ Claude binary symlink: ~/.local/bin/claude -> ${CLAUDE_BINARY}"
+        ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
+        log "✅ Claude binary symlink: ~/.local/bin/claude -> ${CLAUDE_VERSIONS}/${LATEST_VERSION}"
     fi
 else
     # Claude not installed - install it
@@ -166,15 +204,16 @@ else
 
     # Install Claude Code using the official installer
     if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
-        # After install, copy to our versions directory
-        if [ -d "${DEFAULT_VERSIONS}" ]; then
-            LATEST_VERSION=$(ls -1 "${DEFAULT_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
-            if [ -n "${LATEST_VERSION}" ]; then
-                cp -p "${DEFAULT_VERSIONS}/${LATEST_VERSION}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
+        # After install, find and sync the binary
+        find_claude_binary
+        if [ -n "${FOUND_CLAUDE_BINARY}" ]; then
+            LATEST_VERSION="${FOUND_CLAUDE_VERSION}"
+            if [ ! -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
+                cp -p "${FOUND_CLAUDE_BINARY}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
                 chmod 755 "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
-                ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
-                log "✅ Claude Code ${LATEST_VERSION} installed"
             fi
+            ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
+            log "✅ Claude Code ${LATEST_VERSION} installed"
         fi
     else
         log "❌ Failed to install Claude Code"
