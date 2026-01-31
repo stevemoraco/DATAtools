@@ -225,7 +225,27 @@ get_terminal_last_session() {
     fi
 }
 
-# Interactive session picker
+# Run Claude and handle exit codes (returns to menu on failure)
+run_claude_with_retry() {
+    local cmd="$1"
+    local session_desc="$2"
+
+    echo ""
+    echo "  ${session_desc}..."
+
+    # Run Claude
+    eval "$cmd"
+    local exit_code=$?
+
+    # Save session state on success
+    if [ $exit_code -eq 0 ]; then
+        save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)"
+    fi
+
+    return $exit_code
+}
+
+# Interactive session picker (loops until user exits to shell)
 claude_prompt() {
     # Only in interactive shells
     [[ $- != *i* ]] && return 0
@@ -235,92 +255,140 @@ claude_prompt() {
         return 0
     fi
 
-    local running=$(count_claude_instances)
-    local last_session=$(get_terminal_last_session)
+    # LOOP PREVENTION: Track if we've already prompted this terminal session
+    # Include the shell PID so new shells always get the menu
+    local prompt_marker="${REPLIT_TOOLS}/.prompt-active-${TERMINAL_ID}-$$"
 
-    echo ""
-    echo "╭─────────────────────────────────────────────────────────╮"
-    echo "│  Claude Session Manager                                 │"
-    echo "╰─────────────────────────────────────────────────────────╯"
-
-    if [ "$running" -gt 0 ]; then
-        echo "  ($running Claude instance(s) running in other terminals)"
-    fi
-    echo ""
-
-    # Show options
-    echo "  [c] Continue last session for this terminal"
-    if [ -n "$last_session" ]; then
-        echo "      └─ ${last_session:0:8}..."
-    fi
-    echo "  [r] Resume a specific session (pick from list)"
-    echo "  [n] Start new session"
-    echo "  [s] Skip - just give me a shell"
-    echo ""
-
-    # Read choice with timeout
-    local choice
-    read -t 30 -n 1 -p "  Choice [c/r/n/s]: " choice
-    echo ""
-
-    case "$choice" in
-        c|C|"")
-            # Continue last session (default on Enter or timeout)
-            if [ -n "$last_session" ]; then
-                echo ""
-                echo "  Resuming session ${last_session:0:8}..."
-                claude -r "$last_session" --dangerously-skip-permissions
-                save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)"
-            else
-                echo ""
-                echo "  No previous session for this terminal, starting new..."
-                claude --dangerously-skip-permissions
-                save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)"
+    # Clean up old markers from crashed/closed shells
+    # Remove markers older than 1 hour or from PIDs that no longer exist
+    find "${REPLIT_TOOLS}" -name ".prompt-active-*" -mmin +60 -delete 2>/dev/null
+    for marker in "${REPLIT_TOOLS}"/.prompt-active-*; do
+        if [ -f "$marker" ]; then
+            local marker_pid=$(basename "$marker" | rev | cut -d'-' -f1 | rev)
+            if [ -n "$marker_pid" ] && ! kill -0 "$marker_pid" 2>/dev/null; then
+                rm -f "$marker" 2>/dev/null
             fi
-            ;;
-        r|R)
-            # Show session list with full details
-            echo ""
-            echo "  Recent Sessions"
-            show_sessions
+        fi
+    done
 
-            # Get session IDs for selection
-            local session_ids=$(get_recent_sessions | grep "^ID|" | cut -d'|' -f2)
+    # If THIS shell already showed the prompt, skip (prevents re-sourcing issues)
+    if [ -f "$prompt_marker" ]; then
+        return 0
+    fi
 
-            read -p "  Enter number (or 'q' to cancel): " session_num
+    # Mark that we're showing the prompt for THIS shell session
+    touch "$prompt_marker" 2>/dev/null
 
-            if [ "$session_num" = "q" ] || [ -z "$session_num" ]; then
-                echo "  Cancelled."
+    # Cleanup function to remove marker when shell exits
+    trap "rm -f '$prompt_marker' 2>/dev/null" EXIT
+
+    # Main menu loop - keeps showing until user chooses shell
+    while true; do
+        local running=$(count_claude_instances)
+        local last_session=$(get_terminal_last_session)
+
+        echo ""
+        echo "╭─────────────────────────────────────────────────────────╮"
+        echo "│  Claude Session Manager                                 │"
+        echo "╰─────────────────────────────────────────────────────────╯"
+
+        if [ "$running" -gt 0 ]; then
+            echo "  ($running Claude instance(s) running in other terminals)"
+        fi
+        echo ""
+
+        # Show options
+        echo "  [c] Continue last session for this terminal"
+        if [ -n "$last_session" ]; then
+            echo "      └─ ${last_session:0:8}..."
+        fi
+        echo "  [r] Resume a specific session (pick from list)"
+        echo "  [n] Start new session"
+        echo "  [l] Login to Claude (authenticate)"
+        echo "  [s] Skip - just give me a shell"
+        echo ""
+
+        # Read choice with timeout
+        local choice
+        read -t 60 -n 1 -p "  Choice [c/r/n/l/s]: " choice
+        echo ""
+
+        case "$choice" in
+            c|C|"")
+                # Continue last session (default on Enter or timeout)
+                if [ -n "$last_session" ]; then
+                    run_claude_with_retry "claude -r '$last_session' --dangerously-skip-permissions" "Resuming session ${last_session:0:8}"
+                else
+                    run_claude_with_retry "claude --dangerously-skip-permissions" "No previous session, starting new"
+                fi
+                # After Claude exits, loop back to menu
+                echo ""
+                echo "  Claude exited. Returning to menu..."
+                sleep 1
+                ;;
+            r|R)
+                # Show session list with full details
+                echo ""
+                echo "  Recent Sessions"
+                show_sessions
+
+                # Get session IDs for selection
+                local session_ids=$(get_recent_sessions | grep "^ID|" | cut -d'|' -f2)
+
+                read -t 60 -p "  Enter number (or 'q' to cancel): " session_num
+
+                if [ "$session_num" = "q" ] || [ -z "$session_num" ]; then
+                    echo "  Cancelled, returning to menu..."
+                    continue
+                fi
+
+                local selected_id=$(echo "$session_ids" | sed -n "${session_num}p")
+                if [ -n "$selected_id" ]; then
+                    run_claude_with_retry "claude -r '$selected_id' --dangerously-skip-permissions" "Resuming session $selected_id"
+                    echo ""
+                    echo "  Claude exited. Returning to menu..."
+                    sleep 1
+                else
+                    echo "  Invalid selection."
+                fi
+                ;;
+            n|N)
+                # Start new session
+                run_claude_with_retry "claude --dangerously-skip-permissions" "Starting new Claude session"
+                echo ""
+                echo "  Claude exited. Returning to menu..."
+                sleep 1
+                ;;
+            l|L)
+                # Login to Claude
+                echo ""
+                echo "  Starting Claude login..."
+                echo ""
+
+                # Clear the auth failed marker so setup script will retry
+                rm -f "${REPLIT_TOOLS}/.auth-refresh-failed" 2>/dev/null
+
+                claude /login --dangerously-skip-permissions
+
+                echo ""
+                echo "  Login complete. Returning to menu..."
+                sleep 1
+                ;;
+            s|S)
+                # Skip - just shell
+                echo ""
+                echo "  Okay, just a shell. Type 'claude-menu' to return here."
+                # Keep the marker so re-sourcing bashrc won't re-show menu
+                # The trap will clean it up when shell exits
                 return 0
-            fi
-
-            local selected_id=$(echo "$session_ids" | sed -n "${session_num}p")
-            if [ -n "$selected_id" ]; then
+                ;;
+            *)
                 echo ""
-                echo "  Resuming session: $selected_id"
-                claude -r "$selected_id" --dangerously-skip-permissions
-                save_session_state "$selected_id"
-            else
-                echo "  Invalid selection."
-            fi
-            ;;
-        n|N)
-            # Start new session
-            echo ""
-            echo "  Starting new Claude session..."
-            claude --dangerously-skip-permissions
-            save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)"
-            ;;
-        s|S)
-            # Skip - just shell
-            echo ""
-            echo "  Okay, just a shell. Type 'claude' or 'cr' when you want Claude."
-            ;;
-        *)
-            echo ""
-            echo "  Unknown option. Type 'claude' to start manually."
-            ;;
-    esac
+                echo "  Unknown option. Please choose c, r, n, l, or s."
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # Aliases for manual use
@@ -328,6 +396,8 @@ alias cr='claude -c --dangerously-skip-permissions'
 alias claude-resume='claude -c --dangerously-skip-permissions'
 alias claude-pick='claude -r --dangerously-skip-permissions'
 alias claude-new='claude --dangerously-skip-permissions'
+alias l='claude /login --dangerously-skip-permissions'
+alias claude-login='claude /login --dangerously-skip-permissions'
 
 # Export for manual use
 export -f get_recent_sessions
@@ -338,8 +408,19 @@ export TERMINAL_ID
 # Press 's' to skip and just get a shell.
 # Set CLAUDE_NO_PROMPT=true to disable entirely.
 
-alias claude-menu='claude_prompt'
-
-if [ "${CLAUDE_NO_PROMPT}" != "true" ]; then
+# Reset prompt marker and show menu
+claude_menu() {
+    # Clear the marker that claude_prompt uses to prevent re-showing
+    # This allows manual invocation to always show the menu
+    local prompt_marker="${REPLIT_TOOLS}/.prompt-active-${TERMINAL_ID}-$$"
+    rm -f "$prompt_marker" 2>/dev/null
+    # Also clear any old-style markers for this terminal
+    rm -f "${REPLIT_TOOLS}/.prompt-shown-${TERMINAL_ID}" 2>/dev/null
+    rm -f "${REPLIT_TOOLS}/.prompt-active-${TERMINAL_ID}-"* 2>/dev/null
     claude_prompt
-fi
+}
+alias claude-menu='claude_menu'
+alias cm='claude_menu'
+
+# NOTE: claude_prompt is called from bashrc AFTER this script is sourced
+# This ensures all aliases are defined even if user Ctrl+C's out of the prompt

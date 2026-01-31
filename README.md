@@ -203,8 +203,14 @@ After installation, these aliases are available:
 |---------|-------------|
 | `cr` | Continue last Claude session |
 | `claude-resume` | Same as `cr` |
+| `claude-new` | Start a new Claude session |
 | `claude-pick` | Claude's built-in session picker |
-| `claude-menu` | Show the session manager menu again |
+| `cm` | Show the session manager menu |
+| `claude-menu` | Same as `cm` |
+| `l` | Login to Claude (authenticate) |
+| `claude-login` | Same as `l` |
+
+These aliases work from any shell, even without the session manager loop running.
 
 ## Configuration
 

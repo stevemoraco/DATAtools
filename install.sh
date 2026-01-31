@@ -336,7 +336,10 @@ alias cr='claude -c --dangerously-skip-permissions'
 alias claude-resume='claude -c --dangerously-skip-permissions'
 alias claude-pick='claude -r --dangerously-skip-permissions'
 alias claude-new='claude --dangerously-skip-permissions'
+alias l='claude /login --dangerously-skip-permissions'
+alias claude-login='claude /login --dangerously-skip-permissions'
 alias claude-menu='claude_prompt'
+alias cm='claude_prompt'
 
 export -f get_recent_sessions save_session_state
 export TERMINAL_ID
@@ -375,10 +378,15 @@ export HISTCONTROL=ignoredups
 SESSION_MANAGER="/home/runner/workspace/scripts/claude-session-manager.sh"
 [ -f "${SESSION_MANAGER}" ] && source "${SESSION_MANAGER}"
 
-# Aliases
+# Aliases - available even without session manager running
 alias cr='claude -c --dangerously-skip-permissions'
 alias claude-resume='claude -c --dangerously-skip-permissions'
 alias claude-pick='claude -r --dangerously-skip-permissions'
+alias claude-new='claude --dangerously-skip-permissions'
+alias l='claude /login --dangerously-skip-permissions'
+alias claude-login='claude /login --dangerously-skip-permissions'
+alias cm='claude_prompt'
+alias claude-menu='claude_prompt'
 BASHRC_EOF
 
 # Update .replit if it exists

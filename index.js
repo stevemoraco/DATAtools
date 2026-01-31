@@ -622,10 +622,28 @@ export HISTCONTROL=ignoredups
 SESSION_MANAGER="${scriptsDir}/claude-session-manager.sh"
 [ -f "\${SESSION_MANAGER}" ] && source "\${SESSION_MANAGER}"
 
-# Aliases
+# Aliases - available even without session manager running
 alias cr='claude -c --dangerously-skip-permissions'
 alias claude-resume='claude -c --dangerously-skip-permissions'
 alias claude-pick='claude -r --dangerously-skip-permissions'
+alias claude-new='claude --dangerously-skip-permissions'
+alias l='claude /login --dangerously-skip-permissions'
+alias claude-login='claude /login --dangerously-skip-permissions'
+
+# claude-menu function (works even if session manager not sourced)
+if ! type claude_menu &>/dev/null; then
+  claude_menu() {
+    local SESSION_MANAGER="${scriptsDir}/claude-session-manager.sh"
+    if [ -f "\${SESSION_MANAGER}" ]; then
+      source "\${SESSION_MANAGER}"
+      claude_prompt
+    else
+      echo "Session manager not found. Run: claude --dangerously-skip-permissions"
+    fi
+  }
+fi
+alias claude-menu='claude_menu'
+alias cm='claude_menu'
 `;
 
   try {
