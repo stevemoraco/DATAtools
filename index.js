@@ -108,8 +108,8 @@ function main() {
 
   console.log('');
   console.log('╭───────────────────────────────╮');
-  console.log(`│  DATA Tools v${VERSION.padEnd(16)}│`);
-  console.log('│  Claude & Codex Persistence  │');
+  console.log(`│  DATA Tools v${VERSION.padEnd(17)}│`);
+  console.log('│  Claude & Codex Persistence   │');
   console.log('╰───────────────────────────────╯');
 
   // Check for updates
@@ -721,15 +721,15 @@ alias cm='claude_menu'
 
   console.log('');
   console.log('╔═══════════════════════════════╗');
-  console.log(`║  ✅ v${VERSION} Installed!`.padEnd(32) + '║');
+  console.log(`║  ✅ v${VERSION} Installed!`.padEnd(33) + '║');
   console.log('╠═══════════════════════════════╣');
-  console.log('║  Now persists:                ║');
-  console.log('║  • Claude conversations       ║');
-  console.log('║  • Codex CLI data             ║');
-  console.log('║  • Bash history               ║');
-  console.log('║  • Session tracking           ║');
+  console.log('║  Now persists:                 ║');
+  console.log('║  • Claude conversations        ║');
+  console.log('║  • Codex CLI data              ║');
+  console.log('║  • Bash history                ║');
+  console.log('║  • Session tracking            ║');
   console.log('╠═══════════════════════════════╣');
-  console.log('║  Stored in: .replit-tools/    ║');
+  console.log('║  Stored in: .replit-tools/     ║');
   console.log('╚═══════════════════════════════╝');
   console.log('');
 

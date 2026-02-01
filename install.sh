@@ -300,7 +300,7 @@ claude_prompt() {
 
     echo ""
     echo "╭───────────────────────────╮"
-    echo "│  Claude Session Manager  │"
+    echo "│  Claude Session Manager   │"
     echo "╰───────────────────────────╯"
     [ "$running" -gt 0 ] && echo "  ($running running)"
     echo ""

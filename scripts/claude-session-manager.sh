@@ -303,7 +303,7 @@ claude_prompt() {
 
         echo ""
         echo "╭───────────────────────────╮"
-        echo "│  Claude Session Manager  │"
+        echo "│  Claude Session Manager   │"
         echo "╰───────────────────────────╯"
 
         if [ "$running" -gt 0 ]; then
