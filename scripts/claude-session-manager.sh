@@ -290,7 +290,7 @@ claude_prompt() {
         # Colored command key (shown first)
         echo ""
         echo "  ┌─────────────────────────────┐"
-        echo -e "  │ \033[95mAt \033[94m~/workspace\033[1;97m\$\033[0;95m prompt:\033[0m     │"
+        echo -e "  │ \033[95mAt \033[1;38;5;33m~/workspace\033[0;97m\$\033[95m prompt:\033[0m     │"
         echo -e "  │ \033[96mclaude-menu\033[0m = show menu     │"
         echo -e "  │ \033[96mcm\033[0m = menu shortcut          │"
         echo -e "  │ \033[96ml\033[0m  = login to claude        │"
