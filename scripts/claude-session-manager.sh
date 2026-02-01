@@ -290,7 +290,7 @@ claude_prompt() {
         # Colored command key (shown first)
         echo ""
         echo "  ┌─────────────────────────────┐"
-        echo -e "  │ \033[95mAt ~/workspace\$ prompt:\033[0m     │"
+        echo -e "  │ At \033[1;94m~/workspace\033[1;97m\$\033[0m prompt:     │"
         echo -e "  │ \033[96mclaude-menu\033[0m = show menu     │"
         echo -e "  │ \033[96mcm\033[0m = menu shortcut          │"
         echo -e "  │ \033[96ml\033[0m  = login to claude        │"
@@ -435,5 +435,8 @@ claude_menu() {
 alias claude-menu='claude_menu'
 alias cm='claude_menu'
 
-# NOTE: claude_prompt is called from bashrc AFTER this script is sourced
+# Auto-show menu when sourced (unless disabled)
+[ "${CLAUDE_NO_PROMPT}" != "true" ] && claude_prompt
+
+# NOTE: aliases defined above AFTER this script is sourced
 # This ensures all aliases are defined even if user Ctrl+C's out of the prompt
