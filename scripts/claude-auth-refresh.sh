@@ -3,19 +3,20 @@
 # Automatically refreshes Claude Code OAuth tokens before expiration
 # Part of DATA Tools - https://github.com/stevemoraco/DATAtools
 
-# Use .replit-tools structure
+# Paths - credentials are at workspace root, not inside .replit-tools
 WORKSPACE="/home/runner/workspace"
 REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
-CREDENTIALS_FILE="${CLAUDE_CONFIG_DIR:-${REPLIT_TOOLS}/.claude-persistent}/.credentials.json"
+# Credentials are stored at /home/runner/workspace/.claude-persistent (NOT inside .replit-tools)
+CREDENTIALS_FILE="${CLAUDE_CONFIG_DIR:-${WORKSPACE}/.claude-persistent}/.credentials.json"
 LOG_FILE="${REPLIT_TOOLS}/.logs/auth-refresh.log"
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
 
 # OAuth configuration
 OAUTH_ENDPOINT="https://console.anthropic.com/v1/oauth/token"
 CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 REFRESH_THRESHOLD_HOURS=2  # Refresh when less than 2 hours remaining
-
-# Ensure log directory exists
-mkdir -p "${REPLIT_TOOLS}/.logs" 2>/dev/null
 
 # Logging function
 log() {
@@ -97,8 +98,8 @@ refresh_token() {
 
     log "Attempting token refresh..."
 
-    # Make the refresh request
-    local response=$(curl -s -X POST "$OAUTH_ENDPOINT" \
+    # Make the refresh request (5 second timeout to fail fast)
+    local response=$(curl -s --max-time 5 -X POST "$OAUTH_ENDPOINT" \
         -H "Content-Type: application/json" \
         -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$refresh_token\",\"client_id\":\"$CLIENT_ID\"}" \
         2>/dev/null)

@@ -13,14 +13,16 @@
 # Run this script on every container restart via .config/bashrc or .replit
 # =============================================================================
 
-set -e
+# NOTE: Do NOT use 'set -e' here - this script is sourced into bashrc
+# and any error would exit the user's shell, causing restart loops
 
 # Configuration - use .replit-tools structure
 WORKSPACE="/home/runner/workspace"
 REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
 
 # Allow env vars to override (for custom config locations)
-CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${REPLIT_TOOLS}/.claude-persistent}"
+# Note: Credentials are at workspace root (.claude-persistent), NOT inside .replit-tools
+CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${WORKSPACE}/.claude-persistent}"
 CLAUDE_VERSIONS="${REPLIT_TOOLS}/.claude-versions"
 LOGS_DIR="${REPLIT_TOOLS}/.logs"
 SCRIPTS_DIR="${REPLIT_TOOLS}/scripts"
@@ -73,7 +75,8 @@ auto_update_scripts() {
     return 1
 }
 
-if [[ $- == *i* ]]; then
+# Skip update check if we just re-sourced after an update
+if [[ $- == *i* ]] && [ -z "${_REPLIT_TOOLS_UPDATED}" ]; then
     CURRENT_VERSION=""
     if [ -f "${VERSION_FILE}" ]; then
         CURRENT_VERSION=$(cat "${VERSION_FILE}" 2>/dev/null)
@@ -89,12 +92,22 @@ if [[ $- == *i* ]]; then
 
             if auto_update_scripts "${LATEST_VERSION}"; then
                 echo "   ✅ Updated to v${LATEST_VERSION}"
+                # Re-source the updated script so new code runs
+                export _REPLIT_TOOLS_UPDATED=1
+                source "${SCRIPTS_DIR}/setup-claude-code.sh"
+                unset _REPLIT_TOOLS_UPDATED
+                return 0 2>/dev/null || exit 0
             else
                 echo "   ⚠️  Auto-update failed, continuing with v${CURRENT_VERSION}"
             fi
         else
             echo "📦 DATA Tools v${CURRENT_VERSION}"
         fi
+    fi
+elif [[ $- == *i* ]] && [ -n "${_REPLIT_TOOLS_UPDATED}" ]; then
+    # Show version after re-source
+    if [ -f "${VERSION_FILE}" ]; then
+        echo "📦 DATA Tools v$(cat "${VERSION_FILE}" 2>/dev/null)"
     fi
 fi
 
@@ -229,85 +242,100 @@ if [[ ":$PATH:" != *":${LOCAL_BIN}:"* ]]; then
 fi
 
 # =============================================================================
-# Step 6: Auto-refresh OAuth token if needed
+# Step 6: Auto-refresh OAuth token if needed (with loop prevention)
 # =============================================================================
 CREDENTIALS_FILE="${CLAUDE_PERSISTENT}/.credentials.json"
-if [ -f "${CREDENTIALS_FILE}" ] && [ -f "${AUTH_REFRESH_SCRIPT}" ]; then
-    # Source the auth refresh script to get the function
-    source "${AUTH_REFRESH_SCRIPT}"
+AUTH_FAILED_MARKER="${REPLIT_TOOLS}/.auth-refresh-failed"
 
-    # Check and refresh if needed (this handles all the logic)
-    if command -v node &> /dev/null; then
-        AUTH_INFO=$(node -e "
-            try {
-                const creds = require('${CREDENTIALS_FILE}');
-                const oauth = creds.claudeAiOauth;
-                const apiKey = creds.primaryApiKey;
-                if (apiKey) {
-                    console.log('apikey:permanent');
-                } else if (oauth && oauth.expiresAt) {
-                    const now = Date.now();
-                    const remaining = Math.floor((oauth.expiresAt - now) / 1000 / 60 / 60);
-                    const hasRefresh = oauth.refreshToken ? 'yes' : 'no';
-                    console.log('oauth:' + remaining + ':' + hasRefresh);
-                }
-            } catch(e) { console.log('error'); }
-        " 2>/dev/null)
-
-        IFS=':' read -r auth_type remaining has_refresh <<< "${AUTH_INFO}"
-
-        if [ "${auth_type}" = "apikey" ]; then
-            log "✅ Claude authentication: API key (permanent)"
-        elif [ "${auth_type}" = "oauth" ]; then
-            if [ "${remaining}" -le 0 ]; then
-                # Token expired - try to refresh
-                if [ "${has_refresh}" = "yes" ]; then
-                    log "⚠️  Token expired, attempting refresh..."
-                    if refresh_token 2>/dev/null; then
-                        # Re-check the new expiry
-                        NEW_REMAINING=$(node -e "
-                            try {
-                                const creds = require('${CREDENTIALS_FILE}');
-                                const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
-                                console.log(remaining);
-                            } catch(e) { console.log('0'); }
-                        " 2>/dev/null)
-                        log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
-                    else
-                        log "❌ Token refresh failed - run: claude login"
-                    fi
-                else
-                    log "❌ Token expired (no refresh token) - run: claude login"
-                fi
-            elif [ "${remaining}" -lt 2 ]; then
-                # Less than 2 hours - refresh proactively
-                if [ "${has_refresh}" = "yes" ]; then
-                    log "🔄 Token expires in ${remaining}h, refreshing..."
-                    if refresh_token 2>/dev/null; then
-                        NEW_REMAINING=$(node -e "
-                            try {
-                                const creds = require('${CREDENTIALS_FILE}');
-                                const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
-                                console.log(remaining);
-                            } catch(e) { console.log('0'); }
-                        " 2>/dev/null)
-                        log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
-                    else
-                        log "⚠️  Refresh failed, ${remaining}h remaining"
-                    fi
-                else
-                    log "⚠️  Claude authentication: ${remaining}h remaining (no refresh token)"
-                fi
-            else
-                log "✅ Claude authentication: valid (${remaining}h remaining)"
-            fi
-        elif [ "${auth_type}" = "error" ]; then
-            log "⚠️  Could not read credentials"
-        fi
+# Clear failed marker if it's more than 1 hour old (allow retry after cooldown)
+if [ -f "${AUTH_FAILED_MARKER}" ]; then
+    marker_age=$(( $(date +%s) - $(stat -c %Y "${AUTH_FAILED_MARKER}" 2>/dev/null || echo "0") ))
+    if [ "${marker_age}" -gt 3600 ]; then
+        rm -f "${AUTH_FAILED_MARKER}" 2>/dev/null
     fi
+fi
+
+# Skip auth refresh if we already failed recently (file-based lock prevents loops)
+if [ ! -f "${AUTH_FAILED_MARKER}" ] && [ -f "${CREDENTIALS_FILE}" ] && [ -f "${AUTH_REFRESH_SCRIPT}" ]; then
+        # Source the auth refresh script to get the function
+        source "${AUTH_REFRESH_SCRIPT}"
+
+        # Check and refresh if needed (this handles all the logic)
+        if command -v node &> /dev/null; then
+            AUTH_INFO=$(node -e "
+                try {
+                    const creds = require('${CREDENTIALS_FILE}');
+                    const oauth = creds.claudeAiOauth;
+                    const apiKey = creds.primaryApiKey;
+                    if (apiKey) {
+                        console.log('apikey:permanent');
+                    } else if (oauth && oauth.expiresAt) {
+                        const now = Date.now();
+                        const remaining = Math.floor((oauth.expiresAt - now) / 1000 / 60 / 60);
+                        const hasRefresh = oauth.refreshToken ? 'yes' : 'no';
+                        console.log('oauth:' + remaining + ':' + hasRefresh);
+                    } else {
+                        console.log('none');
+                    }
+                } catch(e) { console.log('error'); }
+            " 2>/dev/null)
+
+            IFS=':' read -r auth_type remaining has_refresh <<< "${AUTH_INFO}"
+
+            if [ "${auth_type}" = "apikey" ]; then
+                log "✅ Claude authentication: API key (permanent)"
+            elif [ "${auth_type}" = "oauth" ]; then
+                if [ "${remaining}" -le 0 ]; then
+                    # Token expired - try to refresh once
+                    if [ "${has_refresh}" = "yes" ]; then
+                        log "⚠️  Token expired, attempting refresh..."
+                        if refresh_token 2>/dev/null; then
+                            NEW_REMAINING=$(node -e "
+                                try {
+                                    const creds = require('${CREDENTIALS_FILE}');
+                                    const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
+                                    console.log(remaining);
+                                } catch(e) { console.log('0'); }
+                            " 2>/dev/null)
+                            log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
+                        else
+                            log "❌ Token refresh failed - run 'claude login' when ready"
+                            touch "${AUTH_FAILED_MARKER}"
+                        fi
+                    else
+                        log "❌ Token expired (no refresh token) - run 'claude login' when ready"
+                        touch "${AUTH_FAILED_MARKER}"
+                    fi
+                elif [ "${remaining}" -lt 2 ]; then
+                    # Less than 2 hours - refresh proactively
+                    if [ "${has_refresh}" = "yes" ]; then
+                        log "🔄 Token expires in ${remaining}h, refreshing..."
+                        if refresh_token 2>/dev/null; then
+                            NEW_REMAINING=$(node -e "
+                                try {
+                                    const creds = require('${CREDENTIALS_FILE}');
+                                    const remaining = Math.floor((creds.claudeAiOauth.expiresAt - Date.now()) / 1000 / 60 / 60);
+                                    console.log(remaining);
+                                } catch(e) { console.log('0'); }
+                            " 2>/dev/null)
+                            log "✅ Claude authentication: refreshed (${NEW_REMAINING}h remaining)"
+                        else
+                            log "⚠️  Refresh failed, ${remaining}h remaining"
+                        fi
+                    else
+                        log "⚠️  Claude authentication: ${remaining}h remaining (no refresh token)"
+                    fi
+                else
+                    log "✅ Claude authentication: valid (${remaining}h remaining)"
+                fi
+            elif [ "${auth_type}" = "none" ] || [ "${auth_type}" = "error" ]; then
+                log "⚠️  No valid auth - run 'claude login' when ready"
+            fi
+        fi
+elif [ -f "${AUTH_FAILED_MARKER}" ]; then
+    log "⏭️  Skipping auth check (refresh failed recently, retry in 1h or run 'claude login')"
 elif [ ! -f "${CREDENTIALS_FILE}" ]; then
-    log "⚠️  No Claude credentials found. Run 'claude login' to authenticate"
-    log "   💡 Tip: Run 'claude setup-token' for a long-lived token"
+    log "⚠️  No credentials - run 'claude login' when ready"
 fi
 
 # =============================================================================

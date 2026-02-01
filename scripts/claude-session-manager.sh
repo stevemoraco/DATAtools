@@ -308,6 +308,14 @@ claude_prompt() {
         echo "  [s] Skip - just give me a shell"
         echo ""
 
+        # Colored command key
+        echo "  ┌─────────────────────────────────────────────────────────┐"
+        echo -e "  │ \033[36mcm\033[0m = show this menu  \033[36ml\033[0m = login  \033[36mclaude-menu\033[0m = show menu │"
+        echo "  │                                                         │"
+        echo -e "  │ \033[33mCtrl+C\033[0m to exit and run: \033[32mclaude --dangerously-skip-permissions\033[0m │"
+        echo "  └─────────────────────────────────────────────────────────┘"
+        echo ""
+
         # Read choice with timeout
         local choice
         read -t 60 -n 1 -p "  Choice [c/r/n/l/s]: " choice

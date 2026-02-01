@@ -294,11 +294,20 @@ claude_prompt() {
     [ -n "$last_session" ] && echo "      └─ ${last_session:0:8}..."
     echo "  [r] Resume a specific session (pick from list)"
     echo "  [n] Start new session"
+    echo "  [l] Login to Claude (authenticate)"
     echo "  [s] Skip - just give me a shell"
     echo ""
 
+    # Colored command key
+    echo "  ┌─────────────────────────────────────────────────────────┐"
+    echo -e "  │ \033[36mcm\033[0m = show this menu  \033[36ml\033[0m = login  \033[36mclaude-menu\033[0m = show menu │"
+    echo "  │                                                         │"
+    echo -e "  │ \033[33mCtrl+C\033[0m to exit and run: \033[32mclaude --dangerously-skip-permissions\033[0m │"
+    echo "  └─────────────────────────────────────────────────────────┘"
+    echo ""
+
     local choice
-    read -t 30 -n 1 -p "  Choice [c/r/n/s]: " choice
+    read -t 30 -n 1 -p "  Choice [c/r/n/l/s]: " choice
     echo ""
 
     case "$choice" in
@@ -327,7 +336,11 @@ claude_prompt() {
             echo ""; echo "  Starting new Claude session..."
             claude --dangerously-skip-permissions
             save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)" ;;
-        s|S) echo ""; echo "  Okay, just a shell. Type 'claude' or 'cr' when ready." ;;
+        l|L)
+            echo ""; echo "  Starting Claude login..."
+            claude /login --dangerously-skip-permissions
+            echo ""; echo "  Login complete." ;;
+        s|S) echo ""; echo "  Okay, just a shell. Type 'cm' or 'l' when ready." ;;
         *) echo ""; echo "  Unknown option. Type 'claude' to start manually." ;;
     esac
 }
