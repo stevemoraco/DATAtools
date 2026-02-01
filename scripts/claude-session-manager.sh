@@ -162,7 +162,7 @@ show_sessions() {
             SESSION)
                 current_num="$value"
                 echo ""
-                echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo "  [$value]"
                 ;;
             ID)
@@ -288,32 +288,35 @@ claude_prompt() {
         local last_session=$(get_terminal_last_session)
 
         echo ""
-        echo "╭─────────────────────────────────────────────────────────╮"
-        echo "│  Claude Session Manager                                 │"
-        echo "╰─────────────────────────────────────────────────────────╯"
+        echo "╭───────────────────────────╮"
+        echo "│  Claude Session Manager  │"
+        echo "╰───────────────────────────╯"
 
         if [ "$running" -gt 0 ]; then
-            echo "  ($running Claude instance(s) running in other terminals)"
+            echo "  ($running running)"
         fi
         echo ""
 
         # Show options
-        echo "  [c] Continue last session for this terminal"
+        echo "  [c] Continue last session"
         if [ -n "$last_session" ]; then
             echo "      └─ ${last_session:0:8}..."
         fi
-        echo "  [r] Resume a specific session (pick from list)"
+        echo "  [r] Resume (pick from list)"
         echo "  [n] Start new session"
-        echo "  [l] Login to Claude (authenticate)"
-        echo "  [s] Skip - just give me a shell"
+        echo "  [l] Login to Claude"
+        echo "  [s] Skip - just shell"
         echo ""
 
         # Colored command key
-        echo "  ┌─────────────────────────────────────────────────────────┐"
-        echo -e "  │ \033[36mcm\033[0m = show this menu  \033[36ml\033[0m = login  \033[36mclaude-menu\033[0m = show menu │"
-        echo "  │                                                         │"
-        echo -e "  │ \033[33mCtrl+C\033[0m to exit and run: \033[32mclaude --dangerously-skip-permissions\033[0m │"
-        echo "  └─────────────────────────────────────────────────────────┘"
+        echo "  ┌─────────────────────────┐"
+        echo -e "  │ \033[36mcm\033[0m = show menu         │"
+        echo -e "  │ \033[36ml\033[0m  = login             │"
+        echo "  ├─────────────────────────┤"
+        echo -e "  │ \033[33mCtrl+C\033[0m to exit, then:  │"
+        echo -e "  │ \033[32mclaude --dangerously-\033[0m  │"
+        echo -e "  │ \033[32mskip-permissions\033[0m       │"
+        echo "  └─────────────────────────┘"
         echo ""
 
         # Read choice with timeout

@@ -107,10 +107,10 @@ function main() {
   }
 
   console.log('');
-  console.log('╭─────────────────────────────────────────────────────────╮');
-  console.log(`│  DATA Tools v${VERSION.padEnd(44)}│`);
-  console.log('│  Claude & Codex Persistence for Replit                 │');
-  console.log('╰─────────────────────────────────────────────────────────╯');
+  console.log('╭───────────────────────────────╮');
+  console.log(`│  DATA Tools v${VERSION.padEnd(16)}│`);
+  console.log('│  Claude & Codex Persistence  │');
+  console.log('╰───────────────────────────────╯');
 
   // Check for updates
   const latestVersion = checkForUpdates();
@@ -720,29 +720,17 @@ alias cm='claude_menu'
   } catch {}
 
   console.log('');
-  console.log('╔═════════════════════════════════════════════════════════════╗');
-  console.log('║                                                             ║');
-  console.log(`║   ✅  DATA Tools v${VERSION} Installation Complete!`.padEnd(62) + '║');
-  console.log('║                                                             ║');
-  console.log('╠═════════════════════════════════════════════════════════════╣');
-  console.log('║                                                             ║');
-  console.log('║   Your setup now persists across container restarts:        ║');
-  console.log('║                                                             ║');
-  console.log('║   • Claude Code conversations & credentials                 ║');
-  console.log('║   • Codex CLI data & authentication                         ║');
-  console.log('║   • Command history (bash)                                  ║');
-  console.log('║   • Per-terminal session tracking                           ║');
-  console.log('║                                                             ║');
-  console.log('╠═════════════════════════════════════════════════════════════╣');
-  console.log('║                                                             ║');
-  console.log('║   All data stored in: .replit-tools/                        ║');
-  console.log('║                                                             ║');
-  const claudeDisplay = claudePersistentDir.replace(WORKSPACE + '/', '').padEnd(40);
-  const codexDisplay = codexPersistentDir.replace(WORKSPACE + '/', '').padEnd(40);
-  console.log(`║   Claude: ${claudeDisplay} ║`);
-  console.log(`║   Codex:  ${codexDisplay} ║`);
-  console.log('║                                                             ║');
-  console.log('╚═════════════════════════════════════════════════════════════╝');
+  console.log('╔═══════════════════════════════╗');
+  console.log(`║  ✅ v${VERSION} Installed!`.padEnd(32) + '║');
+  console.log('╠═══════════════════════════════╣');
+  console.log('║  Now persists:                ║');
+  console.log('║  • Claude conversations       ║');
+  console.log('║  • Codex CLI data             ║');
+  console.log('║  • Bash history               ║');
+  console.log('║  • Session tracking           ║');
+  console.log('╠═══════════════════════════════╣');
+  console.log('║  Stored in: .replit-tools/    ║');
+  console.log('╚═══════════════════════════════╝');
   console.log('');
 
   // Check if Claude needs login
