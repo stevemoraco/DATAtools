@@ -644,6 +644,9 @@ if ! type claude_menu &>/dev/null; then
 fi
 alias claude-menu='claude_menu'
 alias cm='claude_menu'
+
+# Auto-show menu on shell start (unless disabled)
+[ "\${CLAUDE_NO_PROMPT}" != "true" ] && claude_prompt
 `;
 
   try {
@@ -720,17 +723,17 @@ alias cm='claude_menu'
   } catch {}
 
   console.log('');
-  console.log('╔═══════════════════════════════╗');
-  console.log(`║  ✅ v${VERSION} Installed!`.padEnd(33) + '║');
-  console.log('╠═══════════════════════════════╣');
-  console.log('║  Now persists:                 ║');
-  console.log('║  • Claude conversations        ║');
-  console.log('║  • Codex CLI data              ║');
-  console.log('║  • Bash history                ║');
-  console.log('║  • Session tracking            ║');
-  console.log('╠═══════════════════════════════╣');
-  console.log('║  Stored in: .replit-tools/     ║');
-  console.log('╚═══════════════════════════════╝');
+  console.log('╔═════════════════════════════╗');
+  console.log(`║  ✅ v${VERSION} Installed!   ║`);
+  console.log('╠═════════════════════════════╣');
+  console.log('║  Now persists:              ║');
+  console.log('║  • Claude conversations     ║');
+  console.log('║  • Codex CLI data           ║');
+  console.log('║  • Bash history             ║');
+  console.log('║  • Session tracking         ║');
+  console.log('╠═════════════════════════════╣');
+  console.log('║  Stored: .replit-tools/     ║');
+  console.log('╚═════════════════════════════╝');
   console.log('');
 
   // Check if Claude needs login

@@ -289,15 +289,15 @@ claude_prompt() {
 
         # Colored command key (shown first)
         echo ""
-        echo -e "  \033[95mAt ~/workspace\$ prompt:\033[0m"
         echo "  ┌─────────────────────────────┐"
+        echo -e "  │ \033[95mAt ~/workspace\$ prompt:\033[0m     │"
         echo -e "  │ \033[96mclaude-menu\033[0m = show menu     │"
         echo -e "  │ \033[96mcm\033[0m = menu shortcut          │"
-        echo -e "  │ \033[92ml\033[0m  = login to claude        │"
+        echo -e "  │ \033[96ml\033[0m  = login to claude        │"
         echo "  ├─────────────────────────────┤"
-        echo -e "  │ \033[93mIn Claude:\033[0m                  │"
-        echo -e "  │ \033[95mCtrl+C x2\033[0m = back to menu    │"
-        echo -e "  │ \033[95mCtrl+C x3\033[0m = exit to shell   │"
+        echo -e "  │ \033[92mIn Claude:\033[0m                  │"
+        echo -e "  │ \033[92mCtrl+C x2\033[0m = back to menu    │"
+        echo -e "  │ \033[92mCtrl+C x3\033[0m = exit to shell   │"
         echo "  └─────────────────────────────┘"
 
         echo ""
