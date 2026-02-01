@@ -51,8 +51,8 @@ auto_update_scripts() {
     local latest_ver="$1"
     local tmp_dir=$(mktemp -d)
 
-    # Download and extract latest package
-    if npm pack "${PACKAGE_NAME}@${latest_ver}" --pack-destination="${tmp_dir}" >/dev/null 2>&1; then
+    # Download and extract latest package (--prefer-online bypasses cache)
+    if npm pack "${PACKAGE_NAME}@${latest_ver}" --pack-destination="${tmp_dir}" --prefer-online >/dev/null 2>&1; then
         local tarball="${tmp_dir}/${PACKAGE_NAME}-${latest_ver}.tgz"
         if [ -f "${tarball}" ]; then
             tar -xzf "${tarball}" -C "${tmp_dir}" 2>/dev/null
