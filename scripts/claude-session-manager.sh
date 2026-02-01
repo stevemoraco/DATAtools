@@ -309,14 +309,17 @@ claude_prompt() {
         echo ""
 
         # Colored command key
-        echo "  ┌─────────────────────────┐"
-        echo -e "  │ \033[36mcm\033[0m = show menu         │"
-        echo -e "  │ \033[36ml\033[0m  = login             │"
-        echo "  ├─────────────────────────┤"
-        echo -e "  │ \033[33mCtrl+C\033[0m to exit, then:  │"
-        echo -e "  │ \033[32mclaude --dangerously-\033[0m  │"
-        echo -e "  │ \033[32mskip-permissions\033[0m       │"
-        echo "  └─────────────────────────┘"
+        echo "  At ~/workspace\$ prompt:"
+        echo "  ┌───────────────────────────┐"
+        echo -e "  │ \033[36mclaude-menu\033[0m = show menu  │"
+        echo -e "  │ \033[36mcm\033[0m = menu shortcut       │"
+        echo -e "  │ \033[36ml\033[0m  = login to claude     │"
+        echo "  ├───────────────────────────┤"
+        echo -e "  │ \033[33mCtrl+C\033[0m to exit, then     │"
+        echo -e "  │ run claude manually:     │"
+        echo -e "  │ \033[32mclaude --dangerously-\033[0m    │"
+        echo -e "  │ \033[32mskip-permissions\033[0m         │"
+        echo "  └───────────────────────────┘"
         echo ""
 
         # Read choice with timeout
