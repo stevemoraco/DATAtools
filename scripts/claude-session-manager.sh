@@ -295,7 +295,7 @@ claude_prompt() {
         echo -e "  │ \033[96mcm\033[0m = menu shortcut          │"
         echo -e "  │ \033[96ml\033[0m  = login to claude        │"
         echo "  ├─────────────────────────────┤"
-        echo -e "  │ \033[92mIn Claude:\033[0m                  │"
+        echo -e "  │ \033[1;38;5;208mIn Claude:\033[0m                  │"
         echo -e "  │ \033[92mCtrl+C x2\033[0m = back to menu    │"
         echo -e "  │ \033[92mCtrl+C x3\033[0m = exit to shell   │"
         echo "  └─────────────────────────────┘"
