@@ -1,14 +1,15 @@
 {
-  "name": "replit-tools",
-  "version": "1.2.23",
+  "name": "data-remote",
+  "version": "1.2.41",
   "description": "DATA Tools - One command to set up Claude Code and Codex CLI on Replit with full persistence",
   "main": "index.js",
   "bin": {
-    "replit-tools": "./index.js"
+    "data-remote": "./index.js"
   },
   "keywords": [
     "replit",
     "claude",
+    "codex",
     "claude-code",
     "persistence",
     "session",

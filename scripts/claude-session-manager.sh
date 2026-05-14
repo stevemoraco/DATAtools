@@ -26,125 +26,191 @@ get_terminal_id() {
 TERMINAL_ID=$(get_terminal_id)
 STATE_FILE="${SESSIONS_DIR}/${TERMINAL_ID}.json"
 
-# Get recent sessions with full details
+# Get recent sessions with full details (both Claude and Codex combined, sorted by last seen)
 get_recent_sessions() {
     local history="${HOME}/.claude/history.jsonl"
     local projects_dir="${HOME}/.claude/projects/-home-runner-workspace"
+    local codex_sessions_dir="${HOME}/.codex/sessions"
 
-    if [ -f "${history}" ]; then
-        # Collect all session data with full metadata
-        node -e "
-            const fs = require('fs');
-            const path = require('path');
-            const readline = require('readline');
+    node -e "
+        const fs = require('fs');
+        const path = require('path');
 
-            const historyFile = '${history}';
-            const projectsDir = '${projects_dir}';
+        const historyFile = '${history}';
+        const projectsDir = '${projects_dir}';
+        const codexSessionsDir = '${codex_sessions_dir}';
 
-            const sessionData = new Map();
+        const sessionData = new Map();
 
-            // Read history to get session metadata
+        const isRealPrompt = (txt) => {
+            if (!txt) return false;
+            const t = txt.trim();
+            if (!t) return false;
+            if (/^[✅❌📦🔗⚠️🚀🎉🔧📝]/.test(t)) return false;
+            if (/Claude (history|binary|versions) symlink/.test(t)) return false;
+            if (t.startsWith('# AGENTS.md')) return false;
+            return true;
+        };
+
+        // --- Claude sessions ---
+        if (fs.existsSync(historyFile)) {
             const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
-
+            const entries = [];
             for (const line of lines) {
                 try {
                     const j = JSON.parse(line);
-                    if (!j.sessionId) continue;
-
-                    if (!sessionData.has(j.sessionId)) {
-                        sessionData.set(j.sessionId, {
-                            id: j.sessionId,
-                            firstSeen: j.timestamp,
-                            lastSeen: j.timestamp,
-                            firstPrompt: j.display || '',
-                            lastPrompt: j.display || '',
-                            messageCount: 0,
-                            project: j.project || ''
-                        });
-                    }
-
-                    const data = sessionData.get(j.sessionId);
-                    if (j.timestamp < data.firstSeen) {
-                        data.firstSeen = j.timestamp;
-                        data.firstPrompt = j.display || data.firstPrompt;
-                    }
-                    if (j.timestamp > data.lastSeen) {
-                        data.lastSeen = j.timestamp;
-                        data.lastPrompt = j.display || data.lastPrompt;
-                    }
+                    if (j.sessionId && j.timestamp) entries.push(j);
                 } catch(e) {}
             }
-
-            // Enrich with .jsonl file data (message counts, file sizes)
-            for (const [id, data] of sessionData) {
-                const jsonlPath = path.join(projectsDir, id + '.jsonl');
-                const agentPath = path.join(projectsDir, 'agent-' + id.substring(0,7) + '.jsonl');
-
-                let filePath = null;
-                let fileSize = 0;
-
-                if (fs.existsSync(jsonlPath)) {
-                    filePath = jsonlPath;
-                } else if (fs.existsSync(agentPath)) {
-                    filePath = agentPath;
+            entries.sort((a, b) => a.timestamp - b.timestamp);
+            for (const j of entries) {
+                const key = 'claude:' + j.sessionId;
+                if (!sessionData.has(key)) {
+                    sessionData.set(key, {
+                        tool: 'claude',
+                        id: j.sessionId,
+                        firstSeen: j.timestamp,
+                        lastSeen: j.timestamp,
+                        firstPrompt: '',
+                        lastPrompt: '',
+                        messageCount: 0
+                    });
                 }
+                const data = sessionData.get(key);
+                if (j.timestamp < data.firstSeen) data.firstSeen = j.timestamp;
+                if (j.timestamp > data.lastSeen) data.lastSeen = j.timestamp;
+                if (isRealPrompt(j.display)) {
+                    if (!data.firstPrompt) data.firstPrompt = j.display;
+                    data.lastPrompt = j.display;
+                }
+            }
 
+            for (const [key, data] of Array.from(sessionData)) {
+                if (data.tool !== 'claude') continue;
+                if (!data.firstPrompt) { sessionData.delete(key); continue; }
+                const jsonlPath = path.join(projectsDir, data.id + '.jsonl');
+                const agentPath = path.join(projectsDir, 'agent-' + data.id.substring(0,7) + '.jsonl');
+                let filePath = fs.existsSync(jsonlPath) ? jsonlPath : (fs.existsSync(agentPath) ? agentPath : null);
                 if (filePath) {
                     try {
                         const stat = fs.statSync(filePath);
-                        fileSize = stat.size;
+                        data.fileSize = stat.size;
                         const content = fs.readFileSync(filePath, 'utf8');
-                        const msgLines = content.trim().split('\n').filter(l => l.trim());
-                        data.messageCount = msgLines.length;
-                        data.fileSize = fileSize;
-                        data.filePath = filePath;
+                        data.messageCount = content.trim().split('\n').filter(l => l.trim()).length;
                     } catch(e) {}
                 }
             }
+        }
 
-            // Sort by lastSeen descending and output
-            const sorted = Array.from(sessionData.values())
-                .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))
-                .slice(0, 10);
+        // --- Codex sessions (walk YYYY/MM/DD tree, filter to cwd) ---
+        const cwd = '/home/runner/workspace';
+        if (fs.existsSync(codexSessionsDir)) {
+            const walk = (dir) => {
+                let results = [];
+                try {
+                    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                        const full = path.join(dir, entry.name);
+                        if (entry.isDirectory()) results = results.concat(walk(full));
+                        else if (entry.isFile() && entry.name.endsWith('.jsonl')) results.push(full);
+                    }
+                } catch(e) {}
+                return results;
+            };
+            const files = walk(codexSessionsDir);
+            for (const f of files) {
+                try {
+                    const content = fs.readFileSync(f, 'utf8');
+                    const lines = content.trim().split('\n');
+                    if (!lines.length) continue;
 
-            sorted.forEach((s, i) => {
-                const formatTime = (ts) => {
-                    if (!ts) return 'unknown';
-                    const d = new Date(ts);
-                    const utc = d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-                    // MST is UTC-7
-                    const mst = new Date(ts - 7*60*60*1000).toISOString().replace('T', ' ').substring(0, 19) + ' MST';
-                    return utc + ' / ' + mst;
-                };
+                    const meta = JSON.parse(lines[0]);
+                    if (meta.type !== 'session_meta' || !meta.payload) continue;
+                    if (meta.payload.cwd !== cwd) continue;
 
-                const timeAgo = (ts) => {
-                    if (!ts) return '';
-                    const mins = Math.round((Date.now() - ts) / 1000 / 60);
-                    if (mins < 60) return mins + 'm ago';
-                    if (mins < 1440) return Math.round(mins/60) + 'h ago';
-                    return Math.round(mins/1440) + 'd ago';
-                };
+                    const id = meta.payload.id;
+                    const firstTs = Date.parse(meta.payload.timestamp || meta.timestamp);
 
-                const sizeStr = (bytes) => {
-                    if (!bytes) return '0B';
-                    if (bytes < 1024) return bytes + 'B';
-                    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + 'KB';
-                    return (bytes/1024/1024).toFixed(1) + 'MB';
-                };
+                    let lastTs = firstTs;
+                    let firstPrompt = '';
+                    let lastPrompt = '';
+                    let msgCount = 0;
+                    for (const ln of lines) {
+                        try {
+                            const j = JSON.parse(ln);
+                            if (j.timestamp) lastTs = Math.max(lastTs, Date.parse(j.timestamp));
+                            // event_msg.user_message = actual user-typed input only (no AGENTS.md, no env_context)
+                            if (j.type === 'event_msg' && j.payload && j.payload.type === 'user_message') {
+                                const text = (j.payload.message || '').trim();
+                                if (text) {
+                                    if (!firstPrompt) firstPrompt = text;
+                                    lastPrompt = text;
+                                    msgCount++;
+                                }
+                            }
+                        } catch(e) {}
+                    }
 
-                console.log('SESSION|' + (i+1));
-                console.log('ID|' + s.id);
-                console.log('MESSAGES|' + (s.messageCount || '?'));
-                console.log('SIZE|' + sizeStr(s.fileSize));
-                console.log('LAST_ACTIVE|' + timeAgo(s.lastSeen));
-                console.log('STARTED|' + formatTime(s.firstSeen));
-                console.log('LAST_SEEN|' + formatTime(s.lastSeen));
-                console.log('FIRST_PROMPT|' + (s.firstPrompt || '').substring(0, 80).replace(/\\n/g, ' ').trim());
-                console.log('LAST_PROMPT|' + (s.lastPrompt || '').substring(0, 80).replace(/\\n/g, ' ').trim());
-                console.log('---');
-            });
-        " 2>/dev/null
-    fi
+                    // Skip sessions with no real user-typed input
+                    if (msgCount === 0 || !firstPrompt) continue;
+                    // Skip sub-agent sessions: first message is an agent system prompt
+                    if (/^(you are |you're |\\*\\*role\\*\\*|<role>|## role)/i.test(firstPrompt)) continue;
+                    // Skip if first message is suspiciously long single-shot agent task (no follow-ups)
+                    if (msgCount === 1 && firstPrompt.length > 500) continue;
+
+                    const stat = fs.statSync(f);
+                    sessionData.set('codex:' + id, {
+                        tool: 'codex',
+                        id,
+                        firstSeen: firstTs,
+                        lastSeen: lastTs,
+                        firstPrompt,
+                        lastPrompt,
+                        messageCount: msgCount,
+                        fileSize: stat.size
+                    });
+                } catch(e) {}
+            }
+        }
+
+        // Sort by lastSeen descending
+        const sorted = Array.from(sessionData.values())
+            .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))
+            .slice(0, 10);
+
+        const formatTime = (ts) => {
+            if (!ts) return 'unknown';
+            const utc = new Date(ts).toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+            const mst = new Date(ts - 7*60*60*1000).toISOString().replace('T', ' ').substring(0, 19) + ' MST';
+            return utc + ' / ' + mst;
+        };
+        const timeAgo = (ts) => {
+            if (!ts) return '';
+            const mins = Math.round((Date.now() - ts) / 1000 / 60);
+            if (mins < 60) return mins + 'm ago';
+            if (mins < 1440) return Math.round(mins/60) + 'h ago';
+            return Math.round(mins/1440) + 'd ago';
+        };
+        const sizeStr = (bytes) => {
+            if (!bytes) return '0B';
+            if (bytes < 1024) return bytes + 'B';
+            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + 'KB';
+            return (bytes/1024/1024).toFixed(1) + 'MB';
+        };
+
+        sorted.forEach((s, i) => {
+            console.log('SESSION|' + (i+1));
+            console.log('TOOL|' + s.tool);
+            console.log('ID|' + s.id);
+            console.log('MESSAGES|' + (s.messageCount || '?'));
+            console.log('SIZE|' + sizeStr(s.fileSize));
+            console.log('LAST_ACTIVE|' + timeAgo(s.lastSeen));
+            console.log('STARTED|' + formatTime(s.firstSeen));
+            console.log('LAST_SEEN|' + formatTime(s.lastSeen));
+            console.log('FIRST_PROMPT|' + (s.firstPrompt || '').substring(0, 80).replace(/\\n/g, ' ').trim());
+            console.log('LAST_PROMPT|' + (s.lastPrompt || '').substring(0, 80).replace(/\\n/g, ' ').trim());
+            console.log('---');
+        });
+    " 2>/dev/null
 }
 
 # Display formatted session list
@@ -164,6 +230,13 @@ show_sessions() {
                 echo ""
                 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 echo "  [$value]"
+                ;;
+            TOOL)
+                if [ "$value" = "codex" ]; then
+                    echo -e "  Tool:     \033[1;38;5;208mcodex\033[0m"
+                else
+                    echo -e "  Tool:     \033[1;38;5;33mclaude\033[0m"
+                fi
                 ;;
             ID)
                 echo "  ID:       $value"
@@ -198,48 +271,233 @@ show_sessions() {
     echo ""
 }
 
-# Count running Claude instances
+# Count running Claude/Codex instances
 count_claude_instances() {
     pgrep -x "claude" 2>/dev/null | wc -l
 }
+count_codex_instances() {
+    pgrep -x "codex" 2>/dev/null | wc -l
+}
 
-# Save session state
+# Save session state (tool = "claude" or "codex")
 save_session_state() {
     local session_id="$1"
-    local flags="${2:---dangerously-skip-permissions}"
+    local tool="${2:-claude}"
     mkdir -p "${SESSIONS_DIR}"
     cat > "${STATE_FILE}" << EOF
 {
     "sessionId": "${session_id}",
-    "flags": "${flags}",
+    "tool": "${tool}",
     "terminalId": "${TERMINAL_ID}",
     "timestamp": $(date +%s)
 }
 EOF
 }
 
-# Get last session for this terminal
+# Get last session for this terminal (prints "<tool>|<sessionId>")
 get_terminal_last_session() {
     if [ -f "${STATE_FILE}" ]; then
-        node -e "try{console.log(require('${STATE_FILE}').sessionId||'')}catch(e){}" 2>/dev/null
+        node -e "try{const s=require('${STATE_FILE}');console.log((s.tool||'claude')+'|'+(s.sessionId||''))}catch(e){}" 2>/dev/null
     fi
 }
 
-# Run Claude and handle exit codes (returns to menu on failure)
-run_claude_with_retry() {
+# Recent sessions within configured window (max 9). Prints "NUM|TOOL|ID|AGO|SNIPPET" per line.
+# Window read from ${REPLIT_TOOLS}/config.json: recentWindowHours (default 48)
+get_recent_24h_sessions() {
+    local history="${HOME}/.claude/history.jsonl"
+    local projects_dir="${HOME}/.claude/projects/-home-runner-workspace"
+    local codex_sessions_dir="${HOME}/.codex/sessions"
+    local config_path="${REPLIT_TOOLS}/config.json"
+
+    node -e "
+        const fs = require('fs');
+        const path = require('path');
+        let hours = 48;
+        try {
+            if (fs.existsSync('${config_path}')) {
+                const cfg = JSON.parse(fs.readFileSync('${config_path}', 'utf8'));
+                if (typeof cfg.recentWindowHours === 'number' && cfg.recentWindowHours > 0) hours = cfg.recentWindowHours;
+            }
+        } catch(e) {}
+        const cutoff = Date.now() - hours*60*60*1000;
+        const cwd = '/home/runner/workspace';
+        const sessions = new Map();
+
+        // Heuristic: skip captured shell output / non-real prompts
+        const isRealPrompt = (txt) => {
+            if (!txt) return false;
+            const t = txt.trim();
+            if (!t) return false;
+            // Skip messages that are obviously captured shell output
+            if (/^[✅❌📦🔗⚠️🚀🎉🔧📝]/.test(t)) return false;
+            if (/Claude (history|binary|versions) symlink/.test(t)) return false;
+            if (t.startsWith('# AGENTS.md')) return false;
+            return true;
+        };
+
+        // Claude
+        const historyFile = '${history}';
+        if (fs.existsSync(historyFile)) {
+            const lines = fs.readFileSync(historyFile, 'utf8').trim().split('\n');
+            // Sort by timestamp ascending so we can pick first real prompt per session
+            const entries = [];
+            for (const line of lines) {
+                try {
+                    const j = JSON.parse(line);
+                    if (j.sessionId && j.timestamp) entries.push(j);
+                } catch(e) {}
+            }
+            entries.sort((a, b) => a.timestamp - b.timestamp);
+            for (const j of entries) {
+                const key = 'claude:' + j.sessionId;
+                if (!sessions.has(key)) {
+                    sessions.set(key, { tool: 'claude', id: j.sessionId, firstSeen: j.timestamp, lastSeen: j.timestamp, firstPrompt: '' });
+                }
+                const s = sessions.get(key);
+                if (j.timestamp < s.firstSeen) s.firstSeen = j.timestamp;
+                if (j.timestamp > s.lastSeen) s.lastSeen = j.timestamp;
+                // Set firstPrompt only on first real user prompt encountered
+                if (!s.firstPrompt && isRealPrompt(j.display)) s.firstPrompt = j.display;
+            }
+            // Drop sessions with no real user prompt
+            for (const [key, s] of Array.from(sessions)) {
+                if (s.tool === 'claude' && !s.firstPrompt) sessions.delete(key);
+            }
+        }
+
+        // Codex
+        const codexDir = '${codex_sessions_dir}';
+        if (fs.existsSync(codexDir)) {
+            const walk = (d) => {
+                let r = [];
+                try {
+                    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+                        const f = path.join(d, e.name);
+                        if (e.isDirectory()) r = r.concat(walk(f));
+                        else if (e.isFile() && e.name.endsWith('.jsonl')) r.push(f);
+                    }
+                } catch(e) {}
+                return r;
+            };
+            for (const f of walk(codexDir)) {
+                try {
+                    const stat = fs.statSync(f);
+                    if (stat.mtimeMs < cutoff) continue;
+                    const content = fs.readFileSync(f, 'utf8');
+                    const lns = content.trim().split('\n');
+                    if (!lns.length) continue;
+                    const meta = JSON.parse(lns[0]);
+                    if (meta.type !== 'session_meta' || !meta.payload) continue;
+                    if (meta.payload.cwd !== cwd) continue;
+                    const id = meta.payload.id;
+                    const firstTs = Date.parse(meta.payload.timestamp || meta.timestamp);
+
+                    let lastTs = firstTs;
+                    let firstPrompt = '';
+                    let realMsgCount = 0;
+                    for (const ln of lns) {
+                        try {
+                            const j = JSON.parse(ln);
+                            if (j.timestamp) lastTs = Math.max(lastTs, Date.parse(j.timestamp));
+                            // event_msg.user_message = actual user-typed input only
+                            if (j.type === 'event_msg' && j.payload && j.payload.type === 'user_message') {
+                                const text = (j.payload.message || '').trim();
+                                if (text) {
+                                    if (!firstPrompt) firstPrompt = text;
+                                    realMsgCount++;
+                                }
+                            }
+                        } catch(e) {}
+                    }
+
+                    // Skip sub-agent / programmatic sessions
+                    if (realMsgCount === 0 || !firstPrompt) continue;
+                    // Skip sub-agent sessions: first message is an agent system prompt
+                    if (/^(you are |you're |\\*\\*role\\*\\*|<role>|## role)/i.test(firstPrompt)) continue;
+                    if (realMsgCount === 1 && firstPrompt.length > 500) continue;
+
+                    sessions.set('codex:' + id, { tool: 'codex', id, firstSeen: firstTs, lastSeen: lastTs, firstPrompt });
+                } catch(e) {}
+            }
+        }
+
+        const normTs = (t) => typeof t === 'number' ? t : (Date.parse(t) || 0);
+        const snippet = (s, n = 40) => {
+            const clean = (s || '').replace(/\s+/g, ' ').trim();
+            return clean.length > n ? clean.slice(0, n - 1) + '…' : clean;
+        };
+        const ago = (ts) => {
+            const mins = Math.round((Date.now() - ts) / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return mins + 'm ago';
+            const h = Math.round(mins / 60);
+            return h + 'h ago';
+        };
+        const sorted = Array.from(sessions.values())
+            .map(s => ({ ...s, lastSeen: normTs(s.lastSeen) }))
+            .filter(s => s.lastSeen >= cutoff)
+            .sort((a, b) => b.lastSeen - a.lastSeen)
+            .slice(0, 9);
+
+        sorted.forEach((s, i) => {
+            console.log((i+1) + '|' + s.tool + '|' + s.id + '|' + ago(s.lastSeen) + '|' + snippet(s.firstPrompt, 13));
+        });
+    " 2>/dev/null
+}
+
+# Latest Codex session ID for this cwd (fallback when no terminal state exists)
+get_latest_codex_session() {
+    node -e "
+        const fs = require('fs');
+        const path = require('path');
+        const dir = '${HOME}/.codex/sessions';
+        const cwd = '/home/runner/workspace';
+        if (!fs.existsSync(dir)) process.exit(0);
+        const walk = (d) => {
+            let r = [];
+            try {
+                for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+                    const f = path.join(d, e.name);
+                    if (e.isDirectory()) r = r.concat(walk(f));
+                    else if (e.isFile() && e.name.endsWith('.jsonl')) r.push(f);
+                }
+            } catch(e) {}
+            return r;
+        };
+        let best = null;
+        for (const f of walk(dir)) {
+            try {
+                const first = fs.readFileSync(f, 'utf8').split('\n', 1)[0];
+                const meta = JSON.parse(first);
+                if (meta.type !== 'session_meta' || !meta.payload) continue;
+                if (meta.payload.cwd !== cwd) continue;
+                const ts = fs.statSync(f).mtimeMs;
+                if (!best || ts > best.ts) best = { id: meta.payload.id, ts };
+            } catch(e) {}
+        }
+        if (best) console.log(best.id);
+    " 2>/dev/null
+}
+
+# Run a CLI command and update session state on clean exit
+run_tool_with_retry() {
     local cmd="$1"
     local session_desc="$2"
+    local tool="${3:-claude}"
 
     echo ""
     echo "  ${session_desc}..."
 
-    # Run Claude
     eval "$cmd"
     local exit_code=$?
 
-    # Save session state on success
     if [ $exit_code -eq 0 ]; then
-        save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)"
+        if [ "$tool" = "codex" ]; then
+            local cid=$(get_latest_codex_session)
+            [ -n "$cid" ] && save_session_state "$cid" "codex"
+        else
+            save_session_state "$(tail -1 "${HOME}/.claude/history.jsonl" 2>/dev/null | grep -oP '"sessionId":"[^"]+"' | cut -d'"' -f4)" "claude"
+        fi
     fi
 
     return $exit_code
@@ -250,8 +508,12 @@ claude_prompt() {
     # Only in interactive shells
     [[ $- != *i* ]] && return 0
 
-    # Check if claude exists
-    if ! command -v claude &>/dev/null; then
+    # Need at least one of the tools
+    local has_claude=0
+    local has_codex=0
+    command -v claude &>/dev/null && has_claude=1
+    command -v codex &>/dev/null && has_codex=1
+    if [ "$has_claude" -eq 0 ] && [ "$has_codex" -eq 0 ]; then
         return 0
     fi
 
@@ -284,8 +546,12 @@ claude_prompt() {
 
     # Main menu loop - keeps showing until user chooses shell
     while true; do
-        local running=$(count_claude_instances)
-        local last_session=$(get_terminal_last_session)
+        local claude_running=$(count_claude_instances)
+        local codex_running=$(count_codex_instances)
+        local last_entry=$(get_terminal_last_session)
+        local last_tool="${last_entry%%|*}"
+        local last_session="${last_entry#*|}"
+        [ "$last_tool" = "$last_entry" ] && last_tool=""
 
         # Colored command key (shown first)
         echo ""
@@ -293,60 +559,128 @@ claude_prompt() {
         echo -e "  │ \033[95mAt \033[1;38;5;33m~/workspace\033[0;97m\$\033[95m prompt:\033[0m     │"
         echo -e "  │ \033[96mclaude-menu\033[0m = show menu     │"
         echo -e "  │ \033[96mcm\033[0m = menu shortcut          │"
-        echo -e "  │ \033[96ml\033[0m  = login to claude        │"
+        echo -e "  │ \033[96mj\033[0m  = login to claude        │"
+        echo -e "  │ \033[96mk\033[0m  = login to codex         │"
         echo "  ├─────────────────────────────┤"
         echo -e "  │ \033[1;38;5;208mIn Claude:\033[0m                  │"
         echo -e "  │ \033[92mCtrl+C x2\033[0m = back to menu    │"
         echo -e "  │ \033[92mCtrl+C x3\033[0m = exit to shell   │"
         echo "  └─────────────────────────────┘"
 
+        # Recent Sessions (last 24h) - numbered for instant resume
+        local recent_24h=$(get_recent_24h_sessions)
+        local recent_tools=()
+        local recent_ids=()
+        if [ -n "$recent_24h" ]; then
+            # Read configured window for label
+            local window_hours=48
+            if [ -f "${REPLIT_TOOLS}/config.json" ] && command -v node &>/dev/null; then
+                window_hours=$(node -e "try{const c=require('${REPLIT_TOOLS}/config.json');console.log(c.recentWindowHours||48)}catch(e){console.log(48)}" 2>/dev/null)
+            fi
+            local window_label
+            if [ "$window_hours" -ge 8760 ]; then
+                window_label="$((window_hours / 8760))y"
+            elif [ "$window_hours" -ge 720 ]; then
+                window_label="$((window_hours / 720))mo"
+            elif [ "$window_hours" -ge 168 ]; then
+                window_label="$((window_hours / 168))w"
+            elif [ "$window_hours" -ge 24 ]; then
+                window_label="$((window_hours / 24))d"
+            else
+                window_label="${window_hours}h"
+            fi
+            echo ""
+            echo -e "  \033[1mRecent (last $window_label):\033[0m"
+            while IFS='|' read -r num tool id when snippet; do
+                [ -z "$num" ] && continue
+                recent_tools[$num]="$tool"
+                recent_ids[$num]="$id"
+                local label_color="\033[1;38;5;208m"
+                local label="cld"
+                if [ "$tool" = "codex" ]; then
+                    label_color="\033[1;38;5;44m"
+                    label="cdx"
+                fi
+                printf "  \033[1;97m[%s]\033[0m ${label_color}%s\033[0m  \033[2m%-8s\033[0m  %s\n" "$num" "$label" "$when" "$snippet"
+            done <<< "$recent_24h"
+        fi
+
         echo ""
         echo "  ┌─────────────────────────────┐"
-        echo "  │   Claude Session Manager    │"
+        echo "  │    DATA Session Manager     │"
         echo "  └─────────────────────────────┘"
 
-        if [ "$running" -gt 0 ]; then
-            echo "  ($running running)"
+        local running_note=""
+        [ "$claude_running" -gt 0 ] && running_note="${claude_running} claude"
+        if [ "$codex_running" -gt 0 ]; then
+            [ -n "$running_note" ] && running_note="${running_note}, "
+            running_note="${running_note}${codex_running} codex"
         fi
+        [ -n "$running_note" ] && echo "  (${running_note} running)"
         echo ""
 
         # Show options
         echo "  [c] Continue last session"
         if [ -n "$last_session" ]; then
-            echo "      └─ ${last_session:0:8}..."
+            echo "      └─ ${last_tool}:${last_session:0:8}..."
         fi
-        echo "  [r] Resume (pick from list)"
-        echo "  [n] Start new session"
-        echo "  [l] Login to Claude"
+        [ -n "$recent_24h" ] && echo "  [1-9] Resume numbered above"
+        echo "  [r] Resume (full list)"
+        echo "  [n] New Claude session"
+        echo "  [m] New Codex session"
+        echo "  [j] Login to Claude"
+        echo "  [k] Login to Codex"
         echo "  [s] Skip - just shell"
         echo ""
 
         # Read choice with timeout
         local choice
-        read -t 60 -n 1 -p "  Choice [c/r/n/l/s]: " choice
+        read -t 60 -n 1 -p "  Choice: " choice
         echo ""
 
         case "$choice" in
-            c|C|"")
-                # Continue last session (default on Enter or timeout)
-                if [ -n "$last_session" ]; then
-                    run_claude_with_retry "claude -r '$last_session' --dangerously-skip-permissions" "Resuming session ${last_session:0:8}"
+            [1-9])
+                local sel_tool="${recent_tools[$choice]}"
+                local sel_id="${recent_ids[$choice]}"
+                if [ -n "$sel_id" ]; then
+                    if [ "$sel_tool" = "codex" ]; then
+                        run_tool_with_retry "codex --dangerously-bypass-approvals-and-sandbox resume '$sel_id'" "Resuming codex session ${sel_id:0:8}" "codex"
+                    else
+                        run_tool_with_retry "claude -r '$sel_id' --dangerously-skip-permissions" "Resuming claude session ${sel_id:0:8}" "claude"
+                    fi
+                    echo ""
+                    echo "  Exited. Returning to menu..."
+                    sleep 1
                 else
-                    run_claude_with_retry "claude --dangerously-skip-permissions" "No previous session, starting new"
+                    echo "  No session at position $choice."
+                    sleep 1
                 fi
-                # After Claude exits, loop back to menu
+                ;;
+            c|C|"")
+                # Continue whichever tool was most recent in this shell
+                if [ -n "$last_session" ]; then
+                    if [ "$last_tool" = "codex" ]; then
+                        run_tool_with_retry "codex --dangerously-bypass-approvals-and-sandbox resume '$last_session'" "Resuming codex session ${last_session:0:8}" "codex"
+                    else
+                        run_tool_with_retry "claude -r '$last_session' --dangerously-skip-permissions" "Resuming claude session ${last_session:0:8}" "claude"
+                    fi
+                else
+                    run_tool_with_retry "claude --dangerously-skip-permissions" "No previous session, starting new Claude" "claude"
+                fi
                 echo ""
-                echo "  Claude exited. Returning to menu..."
+                echo "  Exited. Returning to menu..."
                 sleep 1
                 ;;
             r|R)
-                # Show session list with full details
+                # Combined session list (claude + codex)
                 echo ""
                 echo "  Recent Sessions"
                 show_sessions
 
-                # Get session IDs for selection
-                local session_ids=$(get_recent_sessions | grep "^ID|" | cut -d'|' -f2)
+                # Parallel arrays of tools and ids (index-aligned to SESSION numbers)
+                local data=$(get_recent_sessions)
+                local tools_list=$(echo "$data" | grep "^TOOL|" | cut -d'|' -f2)
+                local ids_list=$(echo "$data" | grep "^ID|" | cut -d'|' -f2)
 
                 read -t 60 -p "  Enter number (or 'q' to cancel): " session_num
 
@@ -355,49 +689,60 @@ claude_prompt() {
                     continue
                 fi
 
-                local selected_id=$(echo "$session_ids" | sed -n "${session_num}p")
+                local selected_tool=$(echo "$tools_list" | sed -n "${session_num}p")
+                local selected_id=$(echo "$ids_list" | sed -n "${session_num}p")
                 if [ -n "$selected_id" ]; then
-                    run_claude_with_retry "claude -r '$selected_id' --dangerously-skip-permissions" "Resuming session $selected_id"
+                    if [ "$selected_tool" = "codex" ]; then
+                        run_tool_with_retry "codex --dangerously-bypass-approvals-and-sandbox resume '$selected_id'" "Resuming codex session $selected_id" "codex"
+                    else
+                        run_tool_with_retry "claude -r '$selected_id' --dangerously-skip-permissions" "Resuming claude session $selected_id" "claude"
+                    fi
                     echo ""
-                    echo "  Claude exited. Returning to menu..."
+                    echo "  Exited. Returning to menu..."
                     sleep 1
                 else
                     echo "  Invalid selection."
                 fi
                 ;;
             n|N)
-                # Start new session
-                run_claude_with_retry "claude --dangerously-skip-permissions" "Starting new Claude session"
+                run_tool_with_retry "claude --dangerously-skip-permissions" "Starting new Claude session" "claude"
                 echo ""
-                echo "  Claude exited. Returning to menu..."
+                echo "  Exited. Returning to menu..."
                 sleep 1
                 ;;
-            l|L)
-                # Login to Claude
+            m|M)
+                run_tool_with_retry "codex --dangerously-bypass-approvals-and-sandbox" "Starting new Codex session" "codex"
+                echo ""
+                echo "  Exited. Returning to menu..."
+                sleep 1
+                ;;
+            j|J|l|L)
                 echo ""
                 echo "  Starting Claude login..."
                 echo ""
-
-                # Clear the auth failed marker so setup script will retry
                 rm -f "${REPLIT_TOOLS}/.auth-refresh-failed" 2>/dev/null
-
                 claude /login --dangerously-skip-permissions
-
+                echo ""
+                echo "  Login complete. Returning to menu..."
+                sleep 1
+                ;;
+            k|K)
+                echo ""
+                echo "  Starting Codex login..."
+                echo ""
+                codex login --device-auth
                 echo ""
                 echo "  Login complete. Returning to menu..."
                 sleep 1
                 ;;
             s|S)
-                # Skip - just shell
                 echo ""
                 echo "  Okay, just a shell. Type 'claude-menu' to return here."
-                # Keep the marker so re-sourcing bashrc won't re-show menu
-                # The trap will clean it up when shell exits
                 return 0
                 ;;
             *)
                 echo ""
-                echo "  Unknown option. Please choose c, r, n, l, or s."
+                echo "  Unknown option. Choose 1-9, c, r, n, m, j, k, or s."
                 sleep 1
                 ;;
         esac
@@ -409,8 +754,12 @@ alias cr='claude -c --dangerously-skip-permissions'
 alias claude-resume='claude -c --dangerously-skip-permissions'
 alias claude-pick='claude -r --dangerously-skip-permissions'
 alias claude-new='claude --dangerously-skip-permissions'
-alias l='claude /login --dangerously-skip-permissions'
+alias j='claude /login --dangerously-skip-permissions'
 alias claude-login='claude /login --dangerously-skip-permissions'
+alias k='codex login --device-auth'
+alias codex-login='codex login --device-auth'
+alias codex-new='codex --dangerously-bypass-approvals-and-sandbox'
+alias codex-resume='codex --dangerously-bypass-approvals-and-sandbox resume'
 
 # Export for manual use
 export -f get_recent_sessions

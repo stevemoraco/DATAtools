@@ -147,6 +147,7 @@ function main() {
   const claudeVersionsDir = path.join(REPLIT_TOOLS, '.claude-versions');
   const logsDir = path.join(REPLIT_TOOLS, '.logs');
   const scriptsDir = path.join(REPLIT_TOOLS, 'scripts');
+  const sshPersistentDir = path.join(REPLIT_TOOLS, '.ssh-persistent');
 
   // Old locations (for migration)
   const oldLocations = {
@@ -504,6 +505,55 @@ function main() {
     console.log(`   ⚠️  Could not create Codex symlink: ${err.message}`);
   }
 
+  // SSH symlink (~/.ssh -> persistent dir, preserves keys/known_hosts/config)
+  const sshLink = path.join(HOME, '.ssh');
+  try {
+    if (!fs.existsSync(sshPersistentDir)) {
+      fs.mkdirSync(sshPersistentDir, { recursive: true, mode: 0o700 });
+    }
+    fs.chmodSync(sshPersistentDir, 0o700);
+
+    let needsLink = false;
+    try {
+      const stat = fs.lstatSync(sshLink);
+      if (stat.isSymbolicLink()) {
+        const current = fs.readlinkSync(sshLink);
+        if (current !== sshPersistentDir) {
+          fs.unlinkSync(sshLink);
+          needsLink = true;
+        }
+      } else if (stat.isDirectory()) {
+        console.log('   Moving existing ~/.ssh data to persistent storage...');
+        execSync(`cp -rn "${sshLink}"/. "${sshPersistentDir}/" 2>/dev/null || true`, { shell: '/bin/bash' });
+        execSync(`rm -rf "${sshLink}"`, { shell: '/bin/bash' });
+        needsLink = true;
+      }
+    } catch {
+      needsLink = true;
+    }
+
+    if (needsLink) {
+      fs.symlinkSync(sshPersistentDir, sshLink);
+    }
+
+    // Re-tighten perms on key files (SSH refuses keys with loose perms)
+    try {
+      for (const f of fs.readdirSync(sshPersistentDir)) {
+        const full = path.join(sshPersistentDir, f);
+        if (f === 'known_hosts' || f === 'config' || f.endsWith('.pub')) {
+          fs.chmodSync(full, 0o644);
+        } else if (fs.statSync(full).isFile()) {
+          fs.chmodSync(full, 0o600);
+        }
+      }
+    } catch {}
+
+    const displayPath = sshPersistentDir.replace(WORKSPACE + '/', '');
+    console.log(`   ~/.ssh → ${displayPath}/`);
+  } catch (err) {
+    console.log(`   ⚠️  Could not create SSH symlink: ${err.message}`);
+  }
+
   // Claude binary symlinks
   const localBin = path.join(HOME, '.local/bin');
   const localShare = path.join(HOME, '.local/share');
@@ -608,6 +658,11 @@ SETUP_SCRIPT="${scriptsDir}/setup-claude-code.sh"
 # Codex Persistence
 mkdir -p "${codexPersistentDir}"
 [ ! -L "\${HOME}/.codex" ] && ln -sf "${codexPersistentDir}" "\${HOME}/.codex"
+
+# SSH Persistence (keys, known_hosts, config)
+mkdir -p "${sshPersistentDir}"
+chmod 700 "${sshPersistentDir}"
+[ ! -L "\${HOME}/.ssh" ] && ln -sf "${sshPersistentDir}" "\${HOME}/.ssh"
 
 # Bash History Persistence
 PERSISTENT_HOME="${persistentHomeDir}"

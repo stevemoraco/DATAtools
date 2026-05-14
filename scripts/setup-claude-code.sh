@@ -24,18 +24,22 @@ REPLIT_TOOLS="${WORKSPACE}/.replit-tools"
 # Note: Credentials are at workspace root (.claude-persistent), NOT inside .replit-tools
 CLAUDE_PERSISTENT="${CLAUDE_CONFIG_DIR:-${WORKSPACE}/.claude-persistent}"
 CLAUDE_VERSIONS="${REPLIT_TOOLS}/.claude-versions"
+CODEX_PERSISTENT="${CODEX_HOME:-${REPLIT_TOOLS}/.codex-persistent}"
+SSH_PERSISTENT="${REPLIT_TOOLS}/.ssh-persistent"
 LOGS_DIR="${REPLIT_TOOLS}/.logs"
 SCRIPTS_DIR="${REPLIT_TOOLS}/scripts"
 AUTH_REFRESH_SCRIPT="${SCRIPTS_DIR}/claude-auth-refresh.sh"
 
 # Target locations (ephemeral, need symlinks)
 CLAUDE_SYMLINK="${HOME}/.claude"
+CODEX_SYMLINK="${HOME}/.codex"
+SSH_SYMLINK="${HOME}/.ssh"
 LOCAL_BIN="${HOME}/.local/bin"
 LOCAL_SHARE_CLAUDE="${HOME}/.local/share/claude"
 
 # Version file
 VERSION_FILE="${REPLIT_TOOLS}/.version"
-PACKAGE_NAME="replit-tools"
+PACKAGE_NAME="data-remote"
 
 # Logging helper
 log() {
@@ -127,6 +131,165 @@ if [ ! -L "${CLAUDE_SYMLINK}" ] || [ "$(readlink -f "${CLAUDE_SYMLINK}")" != "${
     rm -rf "${CLAUDE_SYMLINK}" 2>/dev/null || true
     ln -sf "${CLAUDE_PERSISTENT}" "${CLAUDE_SYMLINK}"
     log "✅ Claude history symlink: ~/.claude -> ${CLAUDE_PERSISTENT}"
+fi
+
+# =============================================================================
+# Step 2.5: Create ~/.codex and ~/.ssh symlinks (persistent across container restarts)
+# =============================================================================
+mkdir -p "${CODEX_PERSISTENT}"
+if [ ! -L "${CODEX_SYMLINK}" ] || [ "$(readlink -f "${CODEX_SYMLINK}")" != "${CODEX_PERSISTENT}" ]; then
+    if [ -d "${CODEX_SYMLINK}" ] && [ ! -L "${CODEX_SYMLINK}" ]; then
+        cp -rn "${CODEX_SYMLINK}"/. "${CODEX_PERSISTENT}/" 2>/dev/null || true
+        rm -rf "${CODEX_SYMLINK}" 2>/dev/null || true
+    else
+        rm -rf "${CODEX_SYMLINK}" 2>/dev/null || true
+    fi
+    ln -sf "${CODEX_PERSISTENT}" "${CODEX_SYMLINK}"
+    log "✅ Codex symlink: ~/.codex -> ${CODEX_PERSISTENT}"
+fi
+
+mkdir -p "${SSH_PERSISTENT}"
+chmod 700 "${SSH_PERSISTENT}" 2>/dev/null
+if [ ! -L "${SSH_SYMLINK}" ] || [ "$(readlink -f "${SSH_SYMLINK}")" != "${SSH_PERSISTENT}" ]; then
+    if [ -d "${SSH_SYMLINK}" ] && [ ! -L "${SSH_SYMLINK}" ]; then
+        cp -rn "${SSH_SYMLINK}"/. "${SSH_PERSISTENT}/" 2>/dev/null || true
+        rm -rf "${SSH_SYMLINK}" 2>/dev/null || true
+    else
+        rm -rf "${SSH_SYMLINK}" 2>/dev/null || true
+    fi
+    ln -sf "${SSH_PERSISTENT}" "${SSH_SYMLINK}"
+    log "✅ SSH symlink: ~/.ssh -> ${SSH_PERSISTENT}"
+fi
+# Re-tighten SSH key permissions (SSH refuses keys with loose perms)
+for f in "${SSH_PERSISTENT}"/*; do
+    [ -f "$f" ] || continue
+    bn=$(basename "$f")
+    case "$bn" in
+        known_hosts|config|*.pub) chmod 644 "$f" 2>/dev/null ;;
+        *) chmod 600 "$f" 2>/dev/null ;;
+    esac
+done
+
+# =============================================================================
+# Step 2.6: Apply user-config persistence + sync append-only mirror archive
+# =============================================================================
+# Config at ${REPLIT_TOOLS}/config.json:
+#   {
+#     "recentWindowHours": 48,        // recent sessions list window
+#     "persistenceDays": 365250,      // Claude cleanupPeriodDays + Codex history bytes
+#     "mirror": { "enabled": true }   // append-only backup mirror of sessions
+#   }
+# The mirror is at ${REPLIT_TOOLS}/.session-archive/ — append-only: files only grow,
+# never shrink. If Claude/Codex deletes a session, the mirror still has it.
+if command -v node &>/dev/null; then
+    PERSIST_OUTPUT=$(REPLIT_TOOLS_DIR="${REPLIT_TOOLS}" CLAUDE_PERSISTENT_DIR="${CLAUDE_PERSISTENT}" CODEX_PERSISTENT_DIR="${CODEX_PERSISTENT}" node -e '
+        const fs = require("fs");
+        const path = require("path");
+
+        // Load config with defaults
+        const configPath = process.env.REPLIT_TOOLS_DIR + "/config.json";
+        const defaults = { recentWindowHours: 48, persistenceDays: 365250, mirror: { enabled: true } };
+        let config = defaults;
+        try {
+            if (fs.existsSync(configPath)) {
+                const loaded = JSON.parse(fs.readFileSync(configPath, "utf8"));
+                config = { ...defaults, ...loaded, mirror: { ...defaults.mirror, ...(loaded.mirror || {}) } };
+            } else {
+                fs.writeFileSync(configPath, JSON.stringify(defaults, null, 2) + "\n");
+                console.log("Created config at " + configPath);
+            }
+        } catch(e) { config = defaults; }
+
+        const persistDays = Math.max(1, parseInt(config.persistenceDays, 10) || 365250);
+        // Claude needs days; Codex max_bytes scales with days (rough: 1 MiB per day, min 100 MiB)
+        const codexMaxBytes = Math.max(104857600, persistDays * 1048576);
+
+        // --- Claude settings.json ---
+        const claudeSettingsPath = process.env.CLAUDE_PERSISTENT_DIR + "/settings.json";
+        try {
+            let s = {};
+            if (fs.existsSync(claudeSettingsPath)) {
+                try { s = JSON.parse(fs.readFileSync(claudeSettingsPath, "utf8")); } catch(e) { s = {}; }
+            }
+            if (s.cleanupPeriodDays !== persistDays) {
+                s.cleanupPeriodDays = persistDays;
+                fs.writeFileSync(claudeSettingsPath, JSON.stringify(s, null, 2) + "\n");
+                console.log("Claude cleanupPeriodDays = " + persistDays);
+            }
+        } catch(e) { console.error("Could not update Claude settings: " + e.message); }
+
+        // --- Codex config.toml ---
+        const codexConfigPath = process.env.CODEX_PERSISTENT_DIR + "/config.toml";
+        try {
+            let c = "";
+            if (fs.existsSync(codexConfigPath)) c = fs.readFileSync(codexConfigPath, "utf8");
+            const desired = String(codexMaxBytes);
+            let updated = false;
+            if (!/\[history\]/.test(c)) {
+                c = (c.trimEnd() + "\n\n[history]\nmax_bytes = " + desired + "\n").trimStart();
+                updated = true;
+            } else if (/max_bytes\s*=\s*(\d+)/.test(c)) {
+                const cur = c.match(/max_bytes\s*=\s*(\d+)/)[1];
+                if (cur !== desired) {
+                    c = c.replace(/(\[history\][\s\S]*?max_bytes\s*=\s*)\d+/, "$1" + desired);
+                    updated = true;
+                }
+            } else {
+                c = c.replace(/\[history\](\s*)/, "[history]$1max_bytes = " + desired + "\n");
+                updated = true;
+            }
+            if (updated) {
+                fs.writeFileSync(codexConfigPath, c);
+                console.log("Codex history.max_bytes = " + desired);
+            }
+        } catch(e) { console.error("Could not update Codex config: " + e.message); }
+
+        // --- Append-only mirror sync ---
+        if (config.mirror && config.mirror.enabled) {
+            const mirrorBase = process.env.REPLIT_TOOLS_DIR + "/.session-archive";
+            const syncTree = (srcDir, mirrorDir) => {
+                if (!fs.existsSync(srcDir)) return { copied: 0, grew: 0 };
+                let copied = 0, grew = 0;
+                const walk = (rel) => {
+                    const srcPath = rel ? path.join(srcDir, rel) : srcDir;
+                    const mirrorPath = rel ? path.join(mirrorDir, rel) : mirrorDir;
+                    let stat;
+                    try { stat = fs.statSync(srcPath); } catch(e) { return; }
+                    if (stat.isDirectory()) {
+                        try { fs.mkdirSync(mirrorPath, { recursive: true }); } catch(e){}
+                        let entries = [];
+                        try { entries = fs.readdirSync(srcPath); } catch(e) { return; }
+                        for (const e of entries) walk(rel ? path.join(rel, e) : e);
+                    } else if (stat.isFile()) {
+                        let mirrorSize = 0;
+                        if (fs.existsSync(mirrorPath)) mirrorSize = fs.statSync(mirrorPath).size;
+                        if (stat.size > mirrorSize) {
+                            try {
+                                fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
+                                fs.copyFileSync(srcPath, mirrorPath);
+                                if (mirrorSize === 0) copied++; else grew++;
+                            } catch(e){}
+                        }
+                    }
+                };
+                walk("");
+                return { copied, grew };
+            };
+            try {
+                fs.mkdirSync(mirrorBase, { recursive: true });
+                const c1 = syncTree(process.env.CLAUDE_PERSISTENT_DIR + "/projects", mirrorBase + "/claude/projects");
+                const c2 = syncTree(process.env.CLAUDE_PERSISTENT_DIR + "/history.jsonl", mirrorBase + "/claude/history.jsonl");
+                const c3 = syncTree(process.env.CODEX_PERSISTENT_DIR + "/sessions", mirrorBase + "/codex/sessions");
+                const c4 = syncTree(process.env.CODEX_PERSISTENT_DIR + "/history.jsonl", mirrorBase + "/codex/history.jsonl");
+                const total = c1.copied + c2.copied + c3.copied + c4.copied;
+                const grew = c1.grew + c2.grew + c3.grew + c4.grew;
+                if (total > 0 || grew > 0) console.log("Archive mirror: +" + total + " new, " + grew + " updated");
+            } catch(e) { console.error("Mirror sync failed: " + e.message); }
+        }
+    ' 2>&1)
+    if [ -n "${PERSIST_OUTPUT}" ]; then
+        while IFS= read -r line; do log "✅ ${line}"; done <<< "${PERSIST_OUTPUT}"
+    fi
 fi
 
 # =============================================================================
