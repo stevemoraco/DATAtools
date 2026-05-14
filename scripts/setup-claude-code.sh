@@ -225,18 +225,27 @@ if command -v node &>/dev/null; then
             if (fs.existsSync(codexConfigPath)) c = fs.readFileSync(codexConfigPath, "utf8");
             const desired = String(codexMaxBytes);
             let updated = false;
+            // Codex requires persistence field when [history] section is present
             if (!/\[history\]/.test(c)) {
-                c = (c.trimEnd() + "\n\n[history]\nmax_bytes = " + desired + "\n").trimStart();
+                c = (c.trimEnd() + "\n\n[history]\npersistence = \"save-all\"\nmax_bytes = " + desired + "\n").trimStart();
                 updated = true;
-            } else if (/max_bytes\s*=\s*(\d+)/.test(c)) {
-                const cur = c.match(/max_bytes\s*=\s*(\d+)/)[1];
-                if (cur !== desired) {
-                    c = c.replace(/(\[history\][\s\S]*?max_bytes\s*=\s*)\d+/, "$1" + desired);
+            } else {
+                // Ensure persistence field exists
+                if (!/(\[history\][\s\S]*?)persistence\s*=/.test(c)) {
+                    c = c.replace(/\[history\](\s*)/, "[history]$1persistence = \"save-all\"\n");
                     updated = true;
                 }
-            } else {
-                c = c.replace(/\[history\](\s*)/, "[history]$1max_bytes = " + desired + "\n");
-                updated = true;
+                // Ensure max_bytes is set correctly
+                if (/max_bytes\s*=\s*(\d+)/.test(c)) {
+                    const cur = c.match(/max_bytes\s*=\s*(\d+)/)[1];
+                    if (cur !== desired) {
+                        c = c.replace(/(\[history\][\s\S]*?max_bytes\s*=\s*)\d+/, "$1" + desired);
+                        updated = true;
+                    }
+                } else {
+                    c = c.replace(/(\[history\][\s\S]*?persistence\s*=\s*"[^"]*"\s*\n)/, "$1max_bytes = " + desired + "\n");
+                    updated = true;
+                }
             }
             if (updated) {
                 fs.writeFileSync(codexConfigPath, c);
