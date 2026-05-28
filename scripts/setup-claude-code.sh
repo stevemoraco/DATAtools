@@ -192,7 +192,7 @@ if command -v node &>/dev/null; then
 
         // Load config with defaults
         const configPath = process.env.REPLIT_TOOLS_DIR + "/config.json";
-        const defaults = { recentWindowHours: 48, persistenceDays: 365250, mirror: { enabled: true } };
+        const defaults = { recentWindowHours: 48, persistenceDays: 365250, autoUpdateHours: 24, mirror: { enabled: true } };
         let config = defaults;
         try {
             if (fs.existsSync(configPath)) {
@@ -464,6 +464,52 @@ run_claude_detection() {
 }
 
 run_claude_detection
+
+# =============================================================================
+# Step 4.6: Proactively pull latest Claude + Codex (background, cached daily)
+# =============================================================================
+# Runs `claude install latest` + `codex update` so both tools actually fetch new
+# releases. claude installs into ~/.local/share/claude/versions which is symlinked
+# into our store, so detect_and_promote_claude then relinks to the new version.
+# Cached via .last-tool-update marker; config.autoUpdateHours controls cadence
+# (default 24; set 0 to check every launch, set very high to effectively disable).
+AUTO_UPDATE_MARKER="${REPLIT_TOOLS}/.last-tool-update"
+AUTO_UPDATE_HOURS=24
+if [ -f "${REPLIT_TOOLS}/config.json" ] && command -v node &>/dev/null; then
+    AUTO_UPDATE_HOURS=$(node -e "try{const c=require('${REPLIT_TOOLS}/config.json');console.log(c.autoUpdateHours!=null?c.autoUpdateHours:24)}catch(e){console.log(24)}" 2>/dev/null)
+fi
+
+claude_codex_should_update=1
+if [ "${CLAUDE_FORCE_REFRESH}" = "1" ]; then
+    claude_codex_should_update=1
+elif [ "${AUTO_UPDATE_HOURS}" = "0" ]; then
+    claude_codex_should_update=1
+elif [ -f "${AUTO_UPDATE_MARKER}" ]; then
+    _upd_age=$(( $(date +%s) - $(stat -c %Y "${AUTO_UPDATE_MARKER}" 2>/dev/null || echo 0) ))
+    [ "${_upd_age}" -lt $(( AUTO_UPDATE_HOURS * 3600 )) ] && claude_codex_should_update=0
+fi
+
+if [ "${claude_codex_should_update}" = "1" ] && { [[ $- == *i* ]] || [ "${CLAUDE_FORCE_REFRESH}" = "1" ]; }; then
+    touch "${AUTO_UPDATE_MARKER}" 2>/dev/null
+    mkdir -p "${LOGS_DIR}" 2>/dev/null
+    (
+        echo "=== $(date) auto-update ==="
+        if command -v claude &>/dev/null; then
+            echo "--- claude install latest ---"
+            claude install latest </dev/null 2>&1
+        fi
+        if command -v codex &>/dev/null; then
+            echo "--- codex update ---"
+            codex update </dev/null 2>&1
+        fi
+        # Promote any newly installed Claude into our managed symlink + GC
+        detect_and_promote_claude
+        gc_claude_versions
+        claude_detect_fingerprint > "${CLAUDE_DETECT_CACHE}" 2>/dev/null
+        echo "=== done $(date) ==="
+    ) >> "${LOGS_DIR}/auto-update.log" 2>&1 &
+    log "🔄 Updating Claude + Codex in background (log: .replit-tools/.logs/auto-update.log)"
+fi
 
 # =============================================================================
 # Step 5: Ensure PATH includes ~/.local/bin
