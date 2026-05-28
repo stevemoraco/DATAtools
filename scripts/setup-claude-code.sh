@@ -41,9 +41,13 @@ LOCAL_SHARE_CLAUDE="${HOME}/.local/share/claude"
 VERSION_FILE="${REPLIT_TOOLS}/.version"
 PACKAGE_NAME="data-remote"
 
-# Logging helper
+# Force Claude re-detection: bash setup-claude-code.sh --refresh  OR  CLAUDE_FORCE_REFRESH=1
+CLAUDE_FORCE_REFRESH="${CLAUDE_FORCE_REFRESH:-0}"
+[ "${1:-}" = "--refresh" ] && CLAUDE_FORCE_REFRESH=1
+
+# Logging helper - prints in interactive shells, or when run manually with --refresh
 log() {
-    if [[ $- == *i* ]]; then
+    if [[ $- == *i* ]] || [ "${CLAUDE_FORCE_REFRESH:-0}" = "1" ]; then
         echo "$1"
     fi
 }
@@ -314,97 +318,152 @@ if [ ! -L "${SHARE_VERSIONS}" ] || [ "$(readlink -f "${SHARE_VERSIONS}")" != "${
 fi
 
 # =============================================================================
-# Step 4: Find latest Claude version and create binary symlink
+# Step 4: Detect newest Claude binary across ALL install locations, promote it
 # =============================================================================
+# Bug history: npm installs claude to node_modules/@anthropic-ai/claude-code/
+# which the old finder never checked, so ~/.local/bin/claude stayed pinned to an
+# old .claude-versions entry while Replit's agent UI launched the newer
+# node_modules binary directly. Now we scan everything, compare by real
+# --version output (not filename), promote the winner, and GC stale copies.
 
-# Check multiple locations for Claude binary (handles race conditions on container restart)
-find_claude_binary() {
-    local found_binary=""
-    local found_version=""
+CLAUDE_DETECT_CACHE="${CLAUDE_VERSIONS}/.detect-cache"
 
-    # Priority 1: Our persistent versions directory
-    if [ -d "${CLAUDE_VERSIONS}" ]; then
-        local ver=$(ls -1 "${CLAUDE_VERSIONS}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
-        if [ -n "${ver}" ] && [ -f "${CLAUDE_VERSIONS}/${ver}" ]; then
-            found_binary="${CLAUDE_VERSIONS}/${ver}"
-            found_version="${ver}"
-        fi
+# Get semver by EXECUTING the binary (never trust filenames). Empty if invalid.
+claude_bin_version() {
+    local bin="$1"
+    [ -f "$bin" ] || return 1
+    local v
+    v=$("$bin" --version 2>/dev/null | awk '{print $1}')
+    if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$v"; return 0
     fi
-
-    # Priority 2: Check if claude command already works (might be from previous install)
-    if [ -z "${found_binary}" ]; then
-        local existing_claude=$(command -v claude 2>/dev/null)
-        if [ -n "${existing_claude}" ] && [ -x "${existing_claude}" ]; then
-            # Follow symlinks to find actual binary
-            local real_path=$(readlink -f "${existing_claude}" 2>/dev/null)
-            if [ -f "${real_path}" ]; then
-                found_binary="${real_path}"
-                found_version=$(basename "${real_path}")
-            fi
-        fi
-    fi
-
-    # Priority 3: Default install location (not through our symlink)
-    if [ -z "${found_binary}" ]; then
-        local default_loc="${HOME}/.local/share/claude/versions"
-        # Check if this is a real directory, not our symlink
-        if [ -d "${default_loc}" ] && [ ! -L "${default_loc}" ]; then
-            local ver=$(ls -1 "${default_loc}" 2>/dev/null | grep -v '^\.' | sort -V | tail -n1)
-            if [ -n "${ver}" ] && [ -f "${default_loc}/${ver}" ]; then
-                found_binary="${default_loc}/${ver}"
-                found_version="${ver}"
-            fi
-        fi
-    fi
-
-    # Return results via global variables
-    FOUND_CLAUDE_BINARY="${found_binary}"
-    FOUND_CLAUDE_VERSION="${found_version}"
+    return 1
 }
 
-# Find any existing Claude installation
-find_claude_binary
-
-if [ -n "${FOUND_CLAUDE_BINARY}" ]; then
-    CLAUDE_BINARY="${FOUND_CLAUDE_BINARY}"
-    LATEST_VERSION="${FOUND_CLAUDE_VERSION}"
-
-    # Ensure binary is in our persistent directory
-    if [ ! -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
-        cp -p "${CLAUDE_BINARY}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
-        chmod 755 "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
-        CLAUDE_BINARY="${CLAUDE_VERSIONS}/${LATEST_VERSION}"
-        log "✅ Claude ${LATEST_VERSION} synced to persistent storage"
+# All places a Claude binary might live (npm, bun, official installer, our store)
+claude_candidate_paths() {
+    echo "${WORKSPACE}/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+    echo "${WORKSPACE}/node_modules/.bin/claude"
+    echo "${HOME}/.npm-global/bin/claude"
+    echo "${HOME}/.bun/bin/claude"
+    if [ -d "${HOME}/.local/share/claude/versions" ] && [ ! -L "${HOME}/.local/share/claude/versions" ]; then
+        find "${HOME}/.local/share/claude/versions" -maxdepth 1 -type f 2>/dev/null
     fi
-
-    # Create or update the binary symlink
-    if [ ! -L "${LOCAL_BIN}/claude" ] || [ "$(readlink -f "${LOCAL_BIN}/claude")" != "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
-        rm -f "${LOCAL_BIN}/claude" 2>/dev/null || true
-        ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
-        log "✅ Claude binary symlink: ~/.local/bin/claude -> ${CLAUDE_VERSIONS}/${LATEST_VERSION}"
+    if [ -d "${CLAUDE_VERSIONS}" ]; then
+        find "${CLAUDE_VERSIONS}" -maxdepth 1 -type f ! -name '.*' 2>/dev/null
     fi
-else
-    # Claude not installed - install it
-    log "⚠️  Claude Code not found, installing..."
+    # command -v claude, but ONLY if it does not resolve to our own managed symlink
+    local cmdclaude our_target real
+    cmdclaude=$(command -v claude 2>/dev/null)
+    our_target=$(readlink -f "${LOCAL_BIN}/claude" 2>/dev/null)
+    if [ -n "$cmdclaude" ]; then
+        real=$(readlink -f "$cmdclaude" 2>/dev/null)
+        [ -n "$real" ] && [ "$real" != "$our_target" ] && echo "$real"
+    fi
+}
 
-    # Install Claude Code using the official installer
-    if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
-        # After install, find and sync the binary
-        find_claude_binary
-        if [ -n "${FOUND_CLAUDE_BINARY}" ]; then
-            LATEST_VERSION="${FOUND_CLAUDE_VERSION}"
-            if [ ! -f "${CLAUDE_VERSIONS}/${LATEST_VERSION}" ]; then
-                cp -p "${FOUND_CLAUDE_BINARY}" "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
-                chmod 755 "${CLAUDE_VERSIONS}/${LATEST_VERSION}" 2>/dev/null || true
+# Cheap fingerprint of candidate paths (mtime+size) to short-circuit unchanged runs
+claude_detect_fingerprint() {
+    {
+        local rp
+        while IFS= read -r c; do
+            [ -z "$c" ] && continue
+            rp=$(readlink -f "$c" 2>/dev/null)
+            [ -f "$rp" ] && stat -c '%n:%Y:%s' "$rp" 2>/dev/null
+        done < <(claude_candidate_paths)
+        readlink -f "${LOCAL_BIN}/claude" 2>/dev/null
+    } | md5sum 2>/dev/null | awk '{print $1}'
+}
+
+# Detect newest version across all candidates, promote into .claude-versions, relink
+detect_and_promote_claude() {
+    local best_ver="" best_path="" seen="" rp v
+    while IFS= read -r c; do
+        [ -z "$c" ] && continue
+        rp=$(readlink -f "$c" 2>/dev/null)
+        [ -z "$rp" ] && continue
+        [ -f "$rp" ] || continue
+        case "$seen" in *"|${rp}|"*) continue ;; esac
+        seen="${seen}|${rp}|"
+        v=$(claude_bin_version "$rp") || continue
+        if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$v" | sort -V | tail -n1)" = "$v" ]; then
+            if [ "$v" != "$best_ver" ] || [ -z "$best_path" ]; then
+                best_ver="$v"; best_path="$rp"
             fi
-            ln -sf "${CLAUDE_VERSIONS}/${LATEST_VERSION}" "${LOCAL_BIN}/claude"
-            log "✅ Claude Code ${LATEST_VERSION} installed"
         fi
-    else
-        log "❌ Failed to install Claude Code"
-        log "   Try running: curl -fsSL https://claude.ai/install.sh | bash"
+    done < <(claude_candidate_paths)
+
+    [ -z "$best_ver" ] && return 1
+
+    mkdir -p "${CLAUDE_VERSIONS}"
+    if [ ! -f "${CLAUDE_VERSIONS}/${best_ver}" ]; then
+        cp -p "${best_path}" "${CLAUDE_VERSIONS}/${best_ver}" 2>/dev/null || true
+        chmod 755 "${CLAUDE_VERSIONS}/${best_ver}" 2>/dev/null || true
     fi
-fi
+
+    local new_target="${CLAUDE_VERSIONS}/${best_ver}"
+    local cur_target
+    cur_target=$(readlink -f "${LOCAL_BIN}/claude" 2>/dev/null)
+    if [ "$cur_target" != "$new_target" ]; then
+        mkdir -p "${LOCAL_BIN}"
+        ln -sfn "${new_target}" "${LOCAL_BIN}/claude"
+        if [ -n "$cur_target" ] && [ -f "$cur_target" ]; then
+            log "✅ Claude $(basename "$cur_target") → ${best_ver}"
+        else
+            log "✅ Claude ${best_ver} active (~/.local/bin/claude)"
+        fi
+    fi
+    LATEST_VERSION="${best_ver}"
+    return 0
+}
+
+# Keep only the newest 3 versions in our store (each binary is ~230 MB)
+gc_claude_versions() {
+    [ -d "${CLAUDE_VERSIONS}" ] || return 0
+    local cur_target all count to_delete v p
+    cur_target=$(readlink -f "${LOCAL_BIN}/claude" 2>/dev/null)
+    all=$(find "${CLAUDE_VERSIONS}" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
+    count=$(printf '%s\n' "$all" | grep -c .)
+    [ "$count" -le 3 ] && return 0
+    to_delete=$(printf '%s\n' "$all" | head -n $((count - 3)))
+    for v in $to_delete; do
+        p="${CLAUDE_VERSIONS}/${v}"
+        [ "$(readlink -f "$p")" = "$cur_target" ] && continue
+        rm -f "$p" 2>/dev/null && log "🗑️  Removed old Claude ${v}"
+    done
+}
+
+# Run detection (cheap short-circuit unless paths changed or --refresh given)
+run_claude_detection() {
+    local fp cached cur
+    fp=$(claude_detect_fingerprint)
+    cached=""
+    [ -f "${CLAUDE_DETECT_CACHE}" ] && cached=$(cat "${CLAUDE_DETECT_CACHE}" 2>/dev/null)
+
+    if [ "${CLAUDE_FORCE_REFRESH}" != "1" ] && [ -n "$fp" ] && [ "$fp" = "$cached" ]; then
+        cur=$(readlink -f "${LOCAL_BIN}/claude" 2>/dev/null)
+        if [ -f "$cur" ]; then
+            LATEST_VERSION=$(basename "$cur")
+            return 0   # nothing changed since last run
+        fi
+    fi
+
+    if detect_and_promote_claude; then
+        gc_claude_versions
+    else
+        log "⚠️  Claude Code not found, installing..."
+        if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
+            detect_and_promote_claude && gc_claude_versions
+        else
+            log "❌ Failed to install Claude Code"
+            log "   Try running: curl -fsSL https://claude.ai/install.sh | bash"
+        fi
+    fi
+    # Persist post-promotion fingerprint so the next shell short-circuits
+    claude_detect_fingerprint > "${CLAUDE_DETECT_CACHE}" 2>/dev/null
+}
+
+run_claude_detection
 
 # =============================================================================
 # Step 5: Ensure PATH includes ~/.local/bin
