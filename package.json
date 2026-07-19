@@ -6,6 +6,9 @@
   "bin": {
     "data-remote": "./index.js"
   },
+  "scripts": {
+    "test": "bash tests/run.sh"
+  },
   "keywords": [
     "replit",
     "claude",

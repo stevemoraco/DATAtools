@@ -4,6 +4,7 @@ const { execSync, spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { LinkCodeError, linkLocalPool } = require('./lib/link-command');
 
 const WORKSPACE = '/home/runner/workspace';
 const HOME = os.homedir();
@@ -85,18 +86,33 @@ function migrateDirectory(oldPath, newPath, description) {
   return false;
 }
 
-// Wrap everything in try-catch to prevent crashes
-try {
+async function cliMain(argv = process.argv.slice(2)) {
+  if (argv[0] === 'link') {
+    const result = await linkLocalPool(argv.slice(1));
+    console.log(`✅ Local credential pool linked to ${result.origin}.`);
+    return;
+  }
+
   main();
-} catch (err) {
-  console.error('');
-  console.error('❌ Installation error:', err.message);
-  console.error('');
-  console.error('You can try running manually:');
-  console.error('  curl -fsSL https://claude.ai/install.sh | bash');
-  console.error('  npm i -g @openai/codex');
-  process.exit(1);
 }
+
+if (require.main === module) {
+  cliMain().catch((err) => {
+    console.error('');
+    if (err instanceof LinkCodeError) {
+      console.error(`❌ ${err.message}`);
+    } else {
+      console.error('❌ Installation error:', err.message);
+      console.error('');
+      console.error('You can try running manually:');
+      console.error('  curl -fsSL https://claude.ai/install.sh | bash');
+      console.error('  npm i -g @openai/codex');
+    }
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { cliMain };
 
 function main() {
   // Check if we're on Replit
